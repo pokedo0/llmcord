@@ -28,7 +28,6 @@ YOUTUBE_URL_RE = re.compile(
     r"(https?://(?:www\.)?(?:youtube\.com/watch\?v=[\w-]{11}(?:\S+)?|youtu\.be/[\w-]{11}(?:\S+)?))",
     re.IGNORECASE,
 )
-DISCORD_MESSAGE_LIMIT = 2000
 EMBED_DESC_LIMIT = 4096
 EMBED_TOTAL_PER_MESSAGE = 6000
 EMBED_MAX_PER_MESSAGE = 10
@@ -103,25 +102,33 @@ def get_gemini_cookies(config: dict[str, Any], youtube_config: dict[str, Any]) -
     return secure_1psid, secure_1psidts
 
 
-def split_text_for_discord(text: str, max_len: int = DISCORD_MESSAGE_LIMIT - 50) -> list[str]:
-    chunks: list[str] = []
-    for paragraph in text.split("\n\n"):
-        paragraph = paragraph.strip()
-        if not paragraph:
-            continue
+def persist_youtube_cookies(
+    secure_1psid: Optional[str],
+    secure_1psidts: Optional[str],
+    clear_1psid: bool = False,
+    clear_1psidts: bool = False,
+) -> bool:
+    try:
+        cfg = read_config()
+        yt_cfg = cfg.setdefault("youtube_summary", {}) or {}
 
-        if len(paragraph) <= max_len:
-            if chunks and len(chunks[-1]) + len(paragraph) + 2 <= max_len:
-                chunks[-1] += "\n\n" + paragraph
-            else:
-                chunks.append(paragraph)
-        else:
-            start = 0
-            while start < len(paragraph):
-                chunks.append(paragraph[start : start + max_len])
-                start += max_len
+        current_psid = yt_cfg.get("secure_1psid", "") or ""
+        current_psidts = yt_cfg.get("secure_1psidts", "") or ""
 
-    return chunks or [text[:max_len]]
+        new_psid = "" if clear_1psid else (secure_1psid.strip() if secure_1psid is not None else current_psid)
+        new_psidts = "" if clear_1psidts else (secure_1psidts.strip() if secure_1psidts is not None else current_psidts)
+
+        yt_cfg["secure_1psid"] = new_psid
+        yt_cfg["secure_1psidts"] = new_psidts
+
+        with open("config.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+
+        logging.info("Updated youtube_summary cookies in config.yaml")
+        return True
+    except Exception:
+        logging.exception("Failed to update youtube_summary cookies")
+        return False
 
 
 def split_text_for_embeds(

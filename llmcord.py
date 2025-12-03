@@ -16,6 +16,7 @@ import yaml
 from csv_summary_img import generate_table_image_file
 from youtube_summary import (
     maybe_handle_youtube_summary,
+    persist_youtube_cookies,
     persist_watch_channel,
     youtube_watch_channels,
     write_prompt_file,
@@ -59,6 +60,15 @@ discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=No
 httpx_client = httpx.AsyncClient()
 
 
+async def require_admin(interaction: discord.Interaction) -> tuple[bool, dict[str, Any]]:
+    cfg = await asyncio.to_thread(get_config)
+    admin_ids = cfg.get("permissions", {}).get("users", {}).get("admin_ids", [])
+    if interaction.user.id not in admin_ids:
+        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        return False, cfg
+    return True, cfg
+
+
 @dataclass
 class MsgNode:
     text: Optional[str] = None
@@ -77,17 +87,19 @@ class MsgNode:
 
 @discord_bot.tree.command(name="model", description="View or switch the current model")
 async def model_command(interaction: discord.Interaction, model: str) -> None:
-    global curr_model
+    global curr_model, config
+
+    is_admin, cfg = await require_admin(interaction)
+    if not is_admin:
+        return
+    config = cfg
 
     if model == curr_model:
         output = f"Current model: `{curr_model}`"
     else:
-        if user_is_admin := interaction.user.id in config["permissions"]["users"]["admin_ids"]:
-            curr_model = model
-            output = f"Model switched to: `{model}`"
-            logging.info(output)
-        else:
-            output = "You don't have permission to change the model."
+        curr_model = model
+        output = f"Model switched to: `{model}`"
+        logging.info(output)
 
     await interaction.response.send_message(output, ephemeral=(interaction.channel.type == discord.ChannelType.private))
 
@@ -117,14 +129,11 @@ async def ytwatch_command(
         await interaction.response.send_message("Can't find the channel for this command.", ephemeral=True)
         return
 
-    config = await asyncio.to_thread(get_config)
-    permissions = config.get("permissions", {})
-    admin_ids = permissions.get("users", {}).get("admin_ids", [])
-    youtube_config = config.get("youtube_summary", {})
-
-    if interaction.user.id not in admin_ids:
-        await interaction.response.send_message("You don't have permission to change YouTube watch settings.", ephemeral=True)
+    is_admin, config = await require_admin(interaction)
+    if not is_admin:
         return
+    permissions = config.get("permissions", {})
+    youtube_config = config.get("youtube_summary", {})
 
     if not youtube_config.get("enabled", True):
         await interaction.response.send_message("YouTube summaries are disabled in config.yaml (youtube_summary.enabled).", ephemeral=True)
@@ -155,14 +164,10 @@ async def ytwatch_command(
 
 @discord_bot.tree.command(name="ytprompt", description="Update the YouTube summary prompt file")
 async def ytprompt_command(interaction: discord.Interaction, prompt: str) -> None:
-    config = await asyncio.to_thread(get_config)
-    permissions = config.get("permissions", {})
-    admin_ids = permissions.get("users", {}).get("admin_ids", [])
-    youtube_config = config.get("youtube_summary", {})
-
-    if interaction.user.id not in admin_ids:
-        await interaction.response.send_message("You don't have permission to update the prompt.", ephemeral=True)
+    is_admin, config = await require_admin(interaction)
+    if not is_admin:
         return
+    youtube_config = config.get("youtube_summary", {})
 
     prompt_file = youtube_config.get("prompt_file", "youtube-summary-prompt.txt")
     success = await asyncio.to_thread(write_prompt_file, prompt_file, prompt)
@@ -173,8 +178,44 @@ async def ytprompt_command(interaction: discord.Interaction, prompt: str) -> Non
         await interaction.response.send_message("Failed to update the prompt file. Check logs for details.", ephemeral=True)
 
 
+@discord_bot.tree.command(name="ysession", description="Update Gemini cookies for YouTube summaries")
+async def ysession_command(
+    interaction: discord.Interaction,
+    secure_1psid: Optional[str] = None,
+    secure_1psidts: Optional[str] = None,
+    clear_1psid: bool = False,
+    clear_1psidts: bool = False,
+) -> None:
+    global config
+
+    is_admin, cfg = await require_admin(interaction)
+    if not is_admin:
+        return
+
+    if not clear_1psid and not clear_1psidts and secure_1psid is None and secure_1psidts is None:
+        await interaction.response.send_message("Provide cookies or set clear_1psid/clear_1psidts to blank them.", ephemeral=True)
+        return
+
+    success = await asyncio.to_thread(
+        persist_youtube_cookies,
+        secure_1psid,
+        secure_1psidts,
+        clear_1psid,
+        clear_1psidts,
+    )
+    if success:
+        config = await asyncio.to_thread(get_config)
+        await interaction.response.send_message("Updated YouTube Gemini session cookies.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Failed to update the Gemini session cookies. Check logs for details.", ephemeral=True)
+
+
 @discord_bot.tree.command(name="test", description="Return a markdown table sample for display testing")
 async def test_command(interaction: discord.Interaction) -> None:
+    is_admin, _ = await require_admin(interaction)
+    if not is_admin:
+        return
+
     await interaction.response.defer(thinking=True, ephemeral=False)
 
     try:
@@ -186,7 +227,7 @@ async def test_command(interaction: discord.Interaction) -> None:
 
     try:
         file = discord.File(output_path, filename=os.path.basename(output_path))
-        await interaction.followup.send(content="Markdown 表格渲染图片：", file=file, ephemeral=False)
+        await interaction.followup.send(content="渲染图片：", file=file, ephemeral=False)
     finally:
         try:
             os.remove(output_path)
