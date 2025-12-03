@@ -56,6 +56,8 @@ Or run local models with:
 - User identity aware (OpenAI API and xAI API only)
 - Streamed responses (turns green when complete, automatically splits into separate messages when too long)
 - Hot reloading config (you can change settings without restarting the bot)
+- Optional auto-summarization of YouTube links using Gemini's video API with a custom prompt file
+- Uses the official `google-genai` SDK for Gemini video understanding
 - Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
 - Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
 - Fully asynchronous
@@ -91,6 +93,11 @@ Or run local models with:
 | **providers** | Add the LLM providers you want to use, each with a `base_url` and optional `api_key` entry. Popular providers (`openai`, `ollama`, etc.) are already included.<br /><br />**Only supports OpenAI compatible APIs.**<br /><br />**Some providers may need `extra_headers` / `extra_query` / `extra_body` entries for extra HTTP data. See the included `azure-openai` provider for an example.** |
 | **models** | Add the models you want to use in `<provider>/<model>: <parameters>` format (examples are included). When you run `/model` these models will show up as autocomplete suggestions.<br /><br />**Refer to each provider's documentation for supported parameters.**<br /><br />**The first model in your `models` list will be the default model at startup.**<br /><br />**Some vision models may need `:vision` added to the end of their name to enable image support.** |
 | **system_prompt** | Write anything you want to customize the bot's behavior!<br /><br />**Leave blank for no system prompt.**<br /><br />**You can use the `{date}` and `{time}` tags in your system prompt to insert the current date and time, based on your host computer's time zone.** |
+
+### YouTube auto-summaries:
+- Configure the `youtube_summary` block in `config.yaml` (defaults to `model: gemini-2.5-flash`, `prompt_file: youtube-summary-prompt.txt`, and uses `providers.google.api_key`). Requires the `google-genai` dependency (included in `requirements.txt`).
+- Edit `youtube-summary-prompt.txt` to change the summary prompt. Supported placeholders: `{url}`, `{channel}`, `{author}`.
+- In any channel, admins can run `/ytwatch enabled:true` to start summarizing YouTube links there. Add `prompt: ...` to set a per-channel override, use `use_default_prompt:true` to revert to the file prompt, or run `/ytwatch enabled:false` to stop.
 
 3. Run the bot:
 

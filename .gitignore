@@ -1,13 +1,16 @@
 # This gitignore is a whitelist. Inspired by https://rgbcu.be/blog/gitignore
+.vscode/
+.history/
+.idea/
+*.iml
 
-*
+__pycache__/
+*.py[cod]
+*$py.class
 
-!.gitignore
-
-!*.md
-!*.py
-
-!Dockerfile
-!config-example.yaml
-!docker-compose.yaml
-!requirements.txt
+venv/
+.venv/
+env/
+ENV/
+*.png
+config.yaml

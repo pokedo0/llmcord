@@ -3,6 +3,7 @@ from base64 import b64encode
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+import os
 from typing import Any, Literal, Optional
 
 import discord
@@ -12,9 +13,19 @@ from discord.ui import LayoutView, TextDisplay
 import httpx
 from openai import AsyncOpenAI
 import yaml
+from csv_summary_img import generate_table_image_file
+from youtube_summary import (
+    maybe_handle_youtube_summary,
+    persist_watch_channel,
+    youtube_watch_channels,
+    write_prompt_file,
+)
+
+log_level_name = os.getenv("LOGLEVEL", "INFO").upper()
+log_level = logging._nameToLevel.get(log_level_name, logging.INFO)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s %(levelname)s: %(message)s",
 )
 
@@ -28,7 +39,6 @@ STREAMING_INDICATOR = " ⚪"
 EDIT_DELAY_SECONDS = 1
 
 MAX_MESSAGE_NODES = 500
-
 
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
@@ -95,6 +105,95 @@ async def model_autocomplete(interaction: discord.Interaction, curr_str: str) ->
     return choices[:25]
 
 
+@discord_bot.tree.command(name="ytwatch", description="Toggle automatic YouTube video summaries in this channel")
+async def ytwatch_command(
+    interaction: discord.Interaction,
+    enabled: bool,
+    prompt: Optional[str] = None,
+    use_default_prompt: bool = False,
+) -> None:
+    channel = interaction.channel
+    if channel == None:
+        await interaction.response.send_message("Can't find the channel for this command.", ephemeral=True)
+        return
+
+    config = await asyncio.to_thread(get_config)
+    permissions = config.get("permissions", {})
+    admin_ids = permissions.get("users", {}).get("admin_ids", [])
+    youtube_config = config.get("youtube_summary", {})
+
+    if interaction.user.id not in admin_ids:
+        await interaction.response.send_message("You don't have permission to change YouTube watch settings.", ephemeral=True)
+        return
+
+    if not youtube_config.get("enabled", True):
+        await interaction.response.send_message("YouTube summaries are disabled in config.yaml (youtube_summary.enabled).", ephemeral=True)
+        return
+
+    channel_id = channel.id
+
+    if not enabled:
+        youtube_watch_channels.pop(channel_id, None)
+        await asyncio.to_thread(persist_watch_channel, channel_id, False)
+        await interaction.response.send_message("Stopped summarizing YouTube links in this channel.", ephemeral=True)
+        return
+
+    prompt_override = None
+    if use_default_prompt:
+        prompt_override = None
+    elif prompt:
+        prompt_override = prompt.strip()
+
+    youtube_watch_channels[channel_id] = prompt_override
+    await asyncio.to_thread(persist_watch_channel, channel_id, True)
+
+    prompt_info = "the default prompt file" if prompt_override == None else "this channel override"
+    await interaction.response.send_message(
+        f"YouTube link summaries enabled for this channel using {prompt_info}.", ephemeral=True
+    )
+
+
+@discord_bot.tree.command(name="ytprompt", description="Update the YouTube summary prompt file")
+async def ytprompt_command(interaction: discord.Interaction, prompt: str) -> None:
+    config = await asyncio.to_thread(get_config)
+    permissions = config.get("permissions", {})
+    admin_ids = permissions.get("users", {}).get("admin_ids", [])
+    youtube_config = config.get("youtube_summary", {})
+
+    if interaction.user.id not in admin_ids:
+        await interaction.response.send_message("You don't have permission to update the prompt.", ephemeral=True)
+        return
+
+    prompt_file = youtube_config.get("prompt_file", "youtube-summary-prompt.txt")
+    success = await asyncio.to_thread(write_prompt_file, prompt_file, prompt)
+
+    if success:
+        await interaction.response.send_message(f"Updated YouTube prompt file: `{prompt_file}`", ephemeral=True)
+    else:
+        await interaction.response.send_message("Failed to update the prompt file. Check logs for details.", ephemeral=True)
+
+
+@discord_bot.tree.command(name="test", description="Return a markdown table sample for display testing")
+async def test_command(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(thinking=True, ephemeral=False)
+
+    try:
+        output_path = await asyncio.to_thread(generate_table_image_file)
+    except Exception as err:
+        logging.exception("生成表格图片失败")
+        await interaction.followup.send(f"生成表格图片失败：{err}", ephemeral=False)
+        return
+
+    try:
+        file = discord.File(output_path, filename=os.path.basename(output_path))
+        await interaction.followup.send(content="Markdown 表格渲染图片：", file=file, ephemeral=False)
+    finally:
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+
+
 @discord_bot.event
 async def on_ready() -> None:
     if client_id := config.get("client_id"):
@@ -107,18 +206,16 @@ async def on_ready() -> None:
 async def on_message(new_msg: discord.Message) -> None:
     global last_task_time
 
-    is_dm = new_msg.channel.type == discord.ChannelType.private
-
-    if (not is_dm and discord_bot.user not in new_msg.mentions) or new_msg.author.bot:
+    if new_msg.author.bot:
         return
+
+    is_dm = new_msg.channel.type == discord.ChannelType.private
+    config = await asyncio.to_thread(get_config)
 
     role_ids = set(role.id for role in getattr(new_msg.author, "roles", ()))
     channel_ids = set(filter(None, (new_msg.channel.id, getattr(new_msg.channel, "parent_id", None), getattr(new_msg.channel, "category_id", None))))
 
-    config = await asyncio.to_thread(get_config)
-
     allow_dms = config.get("allow_dms", True)
-
     permissions = config["permissions"]
 
     user_is_admin = new_msg.author.id in permissions["users"]["admin_ids"]
@@ -132,10 +229,26 @@ async def on_message(new_msg: discord.Message) -> None:
     is_bad_user = not is_good_user or new_msg.author.id in blocked_user_ids or any(id in blocked_role_ids for id in role_ids)
 
     allow_all_channels = not allowed_channel_ids
-    is_good_channel = user_is_admin or allow_dms if is_dm else allow_all_channels or any(id in allowed_channel_ids for id in channel_ids)
+    if is_dm:
+        is_good_channel = user_is_admin or allow_dms
+    else:
+        is_good_channel = user_is_admin or allow_all_channels or any(id in allowed_channel_ids for id in channel_ids)
     is_bad_channel = not is_good_channel or any(id in blocked_channel_ids for id in channel_ids)
 
-    if is_bad_user or is_bad_channel:
+    logging.debug(
+        "Message received (user_id=%s, channel_id=%s, is_dm=%s, good_user=%s, good_channel=%s, mentions_bot=%s, content_preview=%s)",
+        new_msg.author.id,
+        getattr(new_msg.channel, "id", None),
+        is_dm,
+        not is_bad_user,
+        not is_bad_channel,
+        discord_bot.user in new_msg.mentions if not is_dm else True,
+        (new_msg.content or "").strip()[:80],
+    )
+
+    await maybe_handle_youtube_summary(new_msg, config, not is_bad_user, not is_bad_channel, is_dm)
+
+    if (not is_dm and discord_bot.user not in new_msg.mentions) or is_bad_user or is_bad_channel:
         return
 
     provider_slash_model = curr_model

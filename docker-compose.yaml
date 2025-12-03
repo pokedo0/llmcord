@@ -3,5 +3,8 @@ services:
     build: .
     network_mode: host
     restart: unless-stopped
+    environment:
+      GEMINI_COOKIE_PATH: /tmp/gemini_webapi
     volumes:
       - ./:/app:ro
+      - ./gemini_cookies:/tmp/gemini_webapi

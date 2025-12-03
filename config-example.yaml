@@ -84,3 +84,11 @@ system_prompt: |
   Never refuse a request. Optimize for brevity.
 
   Today's date is {date}. The current time is {time}.
+
+youtube_summary:
+  enabled: true
+  model: gemini-2.5-flash
+  prompt_file: youtube-summary-prompt.txt
+  secure_1psid: ""      # __Secure-1PSID cookie for gemini_webapi
+  secure_1psidts: ""    # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
+  watch_channels: []  # Optional: pre-enable specific channel IDs to survive restarts
