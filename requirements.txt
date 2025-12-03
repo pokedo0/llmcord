@@ -4,9 +4,6 @@ openai
 pyyaml
 google-genai
 gemini-webapi
-table2ascii
-markdown2image
-markdown
 pandas
 matplotlib
 dataframe-image

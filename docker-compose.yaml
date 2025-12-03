@@ -6,5 +6,5 @@ services:
     environment:
       GEMINI_COOKIE_PATH: /tmp/gemini_webapi
     volumes:
-      - ./:/app:ro
+      - ./:/app
       - ./gemini_cookies:/tmp/gemini_webapi

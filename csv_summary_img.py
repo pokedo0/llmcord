@@ -8,7 +8,7 @@ from pathlib import Path
 import dataframe_image as dfi
 import matplotlib.pyplot as plt
 import pandas as pd
-from matplotlib import font_manager
+import matplotlib.font_manager as fm
 
 DATA_START = "<<<DATA_START>>>"
 DATA_END = "<<<DATA_END>>>"
@@ -27,13 +27,59 @@ Meta,每日创新低（寻底中）；RSI 超卖；MACD 逐渐好转,分批建�
 
 
 def _init_table_font() -> None:
-    for font_name in FONT_CANDIDATES:
-        try:
-            font_manager.findfont(font_name, fallback_to_default=False)
+    import matplotlib.font_manager as fm
+    import logging
+
+    # 1. 获取系统所有字体名称
+    system_fonts = {f.name for f in fm.fontManager.ttflist}
+    logging.info(f"系统字体总数: {len(system_fonts)}")
+    
+    # 定义首选列表 (SC = 简体中文)
+    PREFERRED_FONTS = [
+        "Noto Sans CJK SC", 
+        "Microsoft YaHei", 
+        "SimHei", 
+        "PingFang SC",
+        "WenQuanYi Micro Hei"
+    ]
+
+    font_found = False
+    
+    # 策略 A: 尝试精确匹配首选字体
+    for font_name in PREFERRED_FONTS:
+        if font_name in system_fonts:
             plt.rcParams["font.sans-serif"] = [font_name]
+            plt.rcParams["font.family"] = "sans-serif"
+            logging.info(f"策略A - 完美匹配: 使用 {font_name}")
+            font_found = True
             break
-        except (ValueError, RuntimeError):
-            continue
+    
+    # 策略 B: 如果没找到，寻找任何包含 "Noto Sans CJK" 的字体 (包含 JP/KR 等)
+    # 这步是关键！它会优先选 Noto Sans (黑体) 而不是 Noto Serif (宋体)
+    if not font_found:
+        sans_cjk = [f for f in system_fonts if "Noto Sans CJK" in f]
+        if sans_cjk:
+            # 排序一下，通常把 SC 排前面（如果有的话），或者至少选一个 Sans
+            chosen_font = sorted(sans_cjk)[0] 
+            plt.rcParams["font.sans-serif"] = [chosen_font]
+            plt.rcParams["font.family"] = "sans-serif"
+            logging.info(f"策略B - 模糊匹配 (Sans优先): 使用 {chosen_font}")
+            font_found = True
+
+    # 策略 C: 实在不行，才用任意 CJK 字体保底 (这时才允许出现宋体)
+    if not font_found:
+        any_cjk = [f for f in system_fonts if "CJK" in f]
+        if any_cjk:
+            chosen_font = any_cjk[0]
+            plt.rcParams["font.sans-serif"] = [chosen_font]
+            plt.rcParams["font.family"] = "sans-serif"
+            logging.warning(f"策略C - 最后保底 (可能是宋体): 使用 {chosen_font}")
+            font_found = True
+
+    if not font_found:
+        logging.error("严重错误：未找到任何支持中文的字体！")
+
+    # 解决负号显示问题
     plt.rcParams["axes.unicode_minus"] = False
 
 
