@@ -26,61 +26,52 @@ Meta,每日创新低（寻底中）；RSI 超卖；MACD 逐渐好转,分批建�
 <<<DATA_END>>>"""
 
 
-def _init_table_font() -> None:
+def _init_table_font() -> str:
+    """初始化字体并返回找到的最佳字体名称"""
     import matplotlib.font_manager as fm
     import logging
 
-    # 1. 获取系统所有字体名称
     system_fonts = {f.name for f in fm.fontManager.ttflist}
     logging.info(f"系统字体总数: {len(system_fonts)}")
-    
-    # 定义首选列表 (SC = 简体中文)
+
     PREFERRED_FONTS = [
-        "Noto Sans CJK SC", 
-        "Microsoft YaHei", 
-        "SimHei", 
+        "Noto Sans CJK SC",
+        "Microsoft YaHei",
+        "SimHei",
         "PingFang SC",
         "WenQuanYi Micro Hei"
     ]
 
-    font_found = False
-    
-    # 策略 A: 尝试精确匹配首选字体
+    # 策略 A: 精确匹配
     for font_name in PREFERRED_FONTS:
         if font_name in system_fonts:
             plt.rcParams["font.sans-serif"] = [font_name]
             plt.rcParams["font.family"] = "sans-serif"
             logging.info(f"策略A - 完美匹配: 使用 {font_name}")
-            font_found = True
-            break
-    
-    # 策略 B: 如果没找到，寻找任何包含 "Noto Sans CJK" 的字体 (包含 JP/KR 等)
-    # 这步是关键！它会优先选 Noto Sans (黑体) 而不是 Noto Serif (宋体)
-    if not font_found:
-        sans_cjk = [f for f in system_fonts if "Noto Sans CJK" in f]
-        if sans_cjk:
-            # 排序一下，通常把 SC 排前面（如果有的话），或者至少选一个 Sans
-            chosen_font = sorted(sans_cjk)[0] 
-            plt.rcParams["font.sans-serif"] = [chosen_font]
-            plt.rcParams["font.family"] = "sans-serif"
-            logging.info(f"策略B - 模糊匹配 (Sans优先): 使用 {chosen_font}")
-            font_found = True
+            return font_name # <--- 修改点：返回字体名
 
-    # 策略 C: 实在不行，才用任意 CJK 字体保底 (这时才允许出现宋体)
-    if not font_found:
-        any_cjk = [f for f in system_fonts if "CJK" in f]
-        if any_cjk:
-            chosen_font = any_cjk[0]
-            plt.rcParams["font.sans-serif"] = [chosen_font]
-            plt.rcParams["font.family"] = "sans-serif"
-            logging.warning(f"策略C - 最后保底 (可能是宋体): 使用 {chosen_font}")
-            font_found = True
+    # 策略 B: 模糊匹配 (针对 Docker 环境)
+    # Dockerfile 中下载了 NotoSansCJKsc-Regular.otf
+    # Matplotlib 可能会将其识别为 "Noto Sans CJK SC" 或类似名称
+    sans_cjk = [f for f in system_fonts if "Noto Sans CJK" in f]
+    if sans_cjk:
+        chosen_font = sorted(sans_cjk)[0]
+        plt.rcParams["font.sans-serif"] = [chosen_font]
+        plt.rcParams["font.family"] = "sans-serif"
+        logging.info(f"策略B - 模糊匹配 (Sans优先): 使用 {chosen_font}")
+        return chosen_font # <--- 修改点：返回字体名
 
-    if not font_found:
-        logging.error("严重错误：未找到任何支持中文的字体！")
+    # 策略 C: 保底
+    any_cjk = [f for f in system_fonts if "CJK" in f]
+    if any_cjk:
+        chosen_font = any_cjk[0]
+        plt.rcParams["font.sans-serif"] = [chosen_font]
+        plt.rcParams["font.family"] = "sans-serif"
+        logging.warning(f"策略C - 最后保底: 使用 {chosen_font}")
+        return chosen_font # <--- 修改点：返回字体名
 
-    # 解决负号显示问题
-    plt.rcParams["axes.unicode_minus"] = False
+    logging.error("严重错误：未找到任何支持中文的字体！")
+    return "sans-serif" # 返回通用名称
 
 
 def _wrap_columns(df: pd.DataFrame, width_map: dict[str, int]) -> pd.DataFrame:
@@ -109,8 +100,9 @@ def extract_csv_payload(raw_text: str) -> str:
     return _extract_csv_payload(raw_text)
 
 
-def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
-    _init_table_font()
+def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None = None) -> str:
+    # 1. 获取确切的字体名称
+    font_name = _init_table_font()
 
     csv_text = _extract_csv_payload(raw_csv)
     df = pd.read_csv(io.StringIO(csv_text), sep=",")
@@ -123,6 +115,10 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
     }
     df_wrapped = _wrap_columns(df, col_widths)
 
+    # 2. 在 CSS 中强制指定 font-family
+    # 这样可以覆盖 Matplotlib 默认的 rm 字体，解决 'Font rm does not have a glyph' 问题
+    css_font_family = f'"{font_name}", sans-serif'
+
     base_styles = [
         dict(
             selector="table",
@@ -130,6 +126,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
                 ("border-collapse", "collapse"),
                 ("width", "100%"),
                 ("background-color", "white"),
+                ("font-family", css_font_family), # <--- 关键修改
             ],
         ),
         dict(
@@ -141,6 +138,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
                 ("padding", "12px 12px"),
                 ("text-align", "left"),
                 ("border-bottom", "2px solid #000"),
+                ("font-family", css_font_family), # <--- 关键修改
             ],
         ),
         dict(
@@ -150,6 +148,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
                 ("text-align", "left"),
                 ("border-bottom", "1px solid #e5e7eb"),
                 ("vertical-align", "top"),
+                ("font-family", css_font_family), # <--- 关键修改
             ],
         ),
         dict(
@@ -161,6 +160,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
                 ("padding", "10px"),
                 ("color", "black"),
                 ("text-align", "center"),
+                ("font-family", css_font_family), # <--- 关键修改
             ],
         ),
     ]
@@ -173,6 +173,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
             "font-size": "12pt",
             "color": "#111827",
             "line-height": "1.6",
+            "font-family": css_font_family, # <--- 再次保险
         }
     )
     styled = styled.set_properties(subset=[df.columns[0]], **{"font-weight": "bold"})
@@ -182,18 +183,18 @@ def render_md_table_to_png(raw_csv: str, output_path: str) -> str:
     else:
         styled = styled.hide(axis="index")
 
-    styled = styled.set_caption("资产观察列表")
+    styled = styled.set_caption(caption or "资产观察列表")
 
     dfi.export(styled, output_path, table_conversion="matplotlib", dpi=200)
     return output_path
 
 
-def generate_table_image_file(raw_csv: str | None = None) -> str:
+def generate_table_image_file(raw_csv: str | None = None, caption: str | None = None) -> str:
     table_content = (raw_csv or DEFAULT_CSV_RAW).strip()
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         output_path = tmp.name
     try:
-        return render_md_table_to_png(table_content, output_path)
+        return render_md_table_to_png(table_content, output_path, caption=caption)
     except Exception:
         logging.exception("渲染 CSV 表格图片失败")
         raise

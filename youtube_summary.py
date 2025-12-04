@@ -354,8 +354,10 @@ async def maybe_handle_youtube_summary(
             await new_msg.reply(embeds=embeds, mention_author=False)
 
     if csv_payload:
+        caption = next((embed.title for embed in new_msg.embeds if getattr(embed, "title", None)), None)
+        caption = f"总结: {caption}" if caption else None
         try:
-            png_path = await asyncio.to_thread(generate_table_image_file, csv_payload)
+            png_path = await asyncio.to_thread(generate_table_image_file, csv_payload, caption)
             file = discord.File(png_path, filename=os.path.basename(png_path))
             await new_msg.reply(content="", file=file, mention_author=False)
         finally:

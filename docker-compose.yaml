@@ -1,5 +1,6 @@
 services:
   container:
+#    build: .
     image: ${IMAGE:-ghcr.io/pokedo0/llmcord:latest}
     pull_policy: always
     network_mode: host
