@@ -331,13 +331,14 @@ async def maybe_handle_youtube_summary(
         await new_msg.reply("Couldn't summarize that video right now.", mention_author=False)
         return
 
+    logging.info("YouTube summary raw length=%s chars. Raw content: %s", len(summary), summary)
+
     summary = summary.replace(UNWANTED_SNIPPET, "")
 
     clean_text, csv_payload = _split_summary_and_csv(summary)
 
     if clean_text:
         logging.info("YouTube summary success (channel_id=%s, user_id=%s)", new_msg.channel.id, new_msg.author.id)
-        logging.info("YouTube summary length=%s chars. Content: %s", len(clean_text), clean_text)
         embed_batches = split_text_for_embeds(clean_text)
         first_embed_with_url = True
 
