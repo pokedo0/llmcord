@@ -1,0 +1,17 @@
+# local config and secrets should stay out of images
+config.yaml
+gemini_cookies
+
+# python caches and build artifacts
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# repo metadata and CI
+.git
+.github
+
+# temp/output files
+*.png
+*.log
+table_output_final.png
