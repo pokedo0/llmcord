@@ -1,6 +1,7 @@
 import argparse
 import io
 import logging
+import json
 import tempfile
 import textwrap
 from pathlib import Path
@@ -9,20 +10,16 @@ import dataframe_image as dfi
 import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.font_manager as fm
+import ast
 
 DATA_START = "<<<DATA_START>>>"
 DATA_END = "<<<DATA_END>>>"
 
 FONT_CANDIDATES = ("Noto Sans CJK SC", "Microsoft YaHei", "SimHei", "PingFang SC", "WenQuanYi Micro Hei", "Arial Unicode MS")
 
+# 更新默认数据为 JSON 格式，方便测试
 DEFAULT_CSV_RAW = """<<<DATA_START>>>
-资产名称,技术指标分析,推荐操作/观点
-纳斯达克 100 / 标普 500,从高点回撤 5%-6%；跌破 60 日均线；处于中性调整水平,正常回调非崩盘；分批买入；等待趋势反转
-黄金 / 白银 / 油气,11 月逆势上涨（如 GDX 涨 5%）,作为防御性资产配置；分散风险效果显著
-英伟达 (NVDA),期权隐含波动大（预期 6-7% 波动）；Put/Call Ratio 偏牛 (0.56)；分析师目标价 >$200,财报博弈风险大（可能横盘杀期权）；建议长期持有；不建议赌财报方向
-比特币 (BTC),反弹至 92000 美元附近；市场风险风向标,若反弹将带动科技股回暖；观察其动向判断大盘
-特斯拉 (TSLA),跌破 60 日均线；RSI 超卖；关键支撑看 11 月中旬低点及 $350,长期上升趋势未变；勿因短期波动离场；关注支撑位
-Meta,每日创新低（寻底中）；RSI 超卖；MACD 逐渐好转,分批建仓（左侧交易）；给予时间等待底部形成
+[["资产名称", "技术指标分析", "推荐操作/观点"],["UnitedHealth (UNH)", "估值：基于2025年EPS 16.25和20倍P/E，短期公允估值约$320。该股是价值股，非成长 爆发股。", "维持长线持有观点，预计明年有望站上$400。新仓安全建仓区间为$320-$330。该股具有防御性，适合追求稳健的投资者。"],["META Platforms (META)", "P/E Ratio: 26 (低于历史平均28-29)。技术面：$650-$620是小幅建仓的区域；$620以下风险收益比更佳。", "股价下跌主要由一次性非现金税务费用和提升AI基建的 资本开支引起，基本面强劲。当前估值具吸引力，可开始在建议区间内分批建仓。"],["Rubrik (RBRK)", "PS Ratio: 14 (低于同业CRWD 28，PANW 16)。目前处于亏损 状态，2026年预计盈利。理想建仓空间为$60-$70。", "高风险、高回报但确定性较强的高成长股，处于数据安全和备份赛道的中心。管理层预计现金流将转正，长期逻 辑坚固，建议可建小仓位并长期持有。"]]
 <<<DATA_END>>>"""
 
 
@@ -42,36 +39,46 @@ def _init_table_font() -> str:
         "WenQuanYi Micro Hei"
     ]
 
+    def _apply_font(font_name: str, strategy_name: str):
+        # 1. 设置无衬线字体 (主字体)
+        plt.rcParams["font.sans-serif"] = [font_name]
+        plt.rcParams["font.family"] = "sans-serif"
+
+        # 2. 【关键】强制设置衬线字体 (rm/serif) 也为该中文字体
+        # 防止 Matplotlib 遇到标点符号或特定字符回退到默认不支持中文的字体
+        plt.rcParams["font.serif"] = [font_name]
+
+        # 3. 【关键】禁止数学公式模式切换字体
+        # 防止遇到 $ % 等符号时切换到 STIX 导致乱码
+        plt.rcParams['mathtext.default'] = 'regular'
+
+        # 4. 解决负号显示
+        plt.rcParams["axes.unicode_minus"] = False
+
+        logging.info(f"{strategy_name}: 使用 {font_name}")
+
     # 策略 A: 精确匹配
     for font_name in PREFERRED_FONTS:
         if font_name in system_fonts:
-            plt.rcParams["font.sans-serif"] = [font_name]
-            plt.rcParams["font.family"] = "sans-serif"
-            logging.info(f"策略A - 完美匹配: 使用 {font_name}")
-            return font_name # <--- 修改点：返回字体名
+            _apply_font(font_name, "策略A - 完美匹配")
+            return font_name
 
     # 策略 B: 模糊匹配 (针对 Docker 环境)
-    # Dockerfile 中下载了 NotoSansCJKsc-Regular.otf
-    # Matplotlib 可能会将其识别为 "Noto Sans CJK SC" 或类似名称
     sans_cjk = [f for f in system_fonts if "Noto Sans CJK" in f]
     if sans_cjk:
         chosen_font = sorted(sans_cjk)[0]
-        plt.rcParams["font.sans-serif"] = [chosen_font]
-        plt.rcParams["font.family"] = "sans-serif"
-        logging.info(f"策略B - 模糊匹配 (Sans优先): 使用 {chosen_font}")
-        return chosen_font # <--- 修改点：返回字体名
+        _apply_font(chosen_font, "策略B - 模糊匹配 (Sans优先)")
+        return chosen_font
 
     # 策略 C: 保底
     any_cjk = [f for f in system_fonts if "CJK" in f]
     if any_cjk:
         chosen_font = any_cjk[0]
-        plt.rcParams["font.sans-serif"] = [chosen_font]
-        plt.rcParams["font.family"] = "sans-serif"
-        logging.warning(f"策略C - 最后保底: 使用 {chosen_font}")
-        return chosen_font # <--- 修改点：返回字体名
+        _apply_font(chosen_font, "策略C - 最后保底")
+        return chosen_font
 
     logging.error("严重错误：未找到任何支持中文的字体！")
-    return "sans-serif" # 返回通用名称
+    return "sans-serif"
 
 
 def _wrap_columns(df: pd.DataFrame, width_map: dict[str, int]) -> pd.DataFrame:
@@ -96,28 +103,89 @@ def _extract_csv_payload(raw_text: str) -> str:
 
 
 def extract_csv_payload(raw_text: str) -> str:
-    """Public wrapper to extract CSV content between placeholders."""
-    return _extract_csv_payload(raw_text)
+    """Public wrapper to extract content between placeholders."""
+    payload = _extract_csv_payload(raw_text)
+    logging.info("Extracted CSV payload: %s", payload)
+    return payload
 
 
-def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None = None) -> str:
-    # 1. 获取确切的字体名称
+def render_md_table_to_png(raw_payload: str, output_path: str, caption: str | None = None) -> str:
+    # 1. 获取字体名称
     font_name = _init_table_font()
 
-    csv_text = _extract_csv_payload(raw_csv)
-    df = pd.read_csv(io.StringIO(csv_text), sep=",")
-    df = df.astype(str)
+    # 2. 提取有效载荷
+    payload_text = _extract_csv_payload(raw_payload).strip()
 
-    col_widths = {
-        df.columns[0]: 14,
-        df.columns[1]: 20,
-        df.columns[2]: 20,
-    }
+    df = pd.DataFrame()
+    used_parser = "unknown"
+
+    # 3. 智能解析：优先 JSON List of Lists，失败则回退 CSV
+    try:
+        # --- 清洗 Markdown 标记 (如 ```json ... ```) ---
+        clean_text = payload_text
+        if clean_text.startswith("```"):
+            lines = clean_text.split('\n')
+            # 去掉第一行(可能含 ```json) 和 最后一行(可能含 ```)
+            if "```" in lines[0]: lines = lines[1:]
+            if len(lines) > 0 and "```" in lines[-1]: lines = lines[:-1]
+            clean_text = "\n".join(lines).strip()
+
+        # --- 尝试 JSON 解析 ---
+        data = json.loads(clean_text)
+
+        # 校验结构：必须是 [[头], [行], [行]]
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+            headers = data[0]
+            rows = data[1:]
+            df = pd.DataFrame(rows, columns=headers)
+        elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            # 兼容对象列表 [{"A":1}, {"A":2}]
+            df = pd.DataFrame(data)
+        else:
+            raise ValueError("JSON format not recognized as table")
+        used_parser = "json"
+
+    except (json.JSONDecodeError, ValueError) as e:
+        # --- JSON 失败，尝试 Python literal，再失败回退到 CSV 解析 ---
+        try:
+            data = ast.literal_eval(payload_text)
+            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                headers = data[0]
+                rows = data[1:]
+                df = pd.DataFrame(rows, columns=headers)
+                used_parser = "literal_eval"
+            elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                df = pd.DataFrame(data)
+                used_parser = "literal_eval"
+            else:
+                raise ValueError("literal_eval format not recognized as table")
+        except Exception:
+            logging.warning(f"结构化解析失败 ({e})，尝试 CSV 回退模式...")
+            try:
+                df = pd.read_csv(io.StringIO(payload_text), sep=",", engine="python")
+                used_parser = "csv"
+            except Exception as csv_e:
+                logging.error(f"CSV 解析也失败: {csv_e}")
+                raise ValueError("无法解析数据，请检查 Prompt 输出格式")
+
+    # 4. 数据预处理：转为字符串，处理空值
+    # 这一步很重要，因为 JSON 可能包含 null/None
+    df = df.astype(str).replace("nan", "").replace("None", "")
+    logging.info("表格解析方式=%s, 维度=%s", used_parser, df.shape)
+
+    # 5. 表格排版与自动换行
+    # 根据列数动态调整宽度，防止太宽或太窄
+    # 这里简单假设前几列比较重要
+    col_widths = {}
+    if len(df.columns) > 0: col_widths[df.columns[0]] = 14
+    if len(df.columns) > 1: col_widths[df.columns[1]] = 20
+    if len(df.columns) > 2: col_widths[df.columns[2]] = 20
+
     df_wrapped = _wrap_columns(df, col_widths)
 
-    # 2. 在 CSS 中强制指定 font-family
-    # 这样可以覆盖 Matplotlib 默认的 rm 字体，解决 'Font rm does not have a glyph' 问题
-    css_font_family = f'"{font_name}", sans-serif'
+    # 6. CSS 样式注入
+    # 直接使用字体名称，不加引号和 fallback，Matplotlib 更稳定
+    css_font_family = font_name
 
     base_styles = [
         dict(
@@ -126,7 +194,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None =
                 ("border-collapse", "collapse"),
                 ("width", "100%"),
                 ("background-color", "white"),
-                ("font-family", css_font_family), # <--- 关键修改
+                ("font-family", css_font_family),
             ],
         ),
         dict(
@@ -138,7 +206,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None =
                 ("padding", "12px 12px"),
                 ("text-align", "left"),
                 ("border-bottom", "2px solid #000"),
-                ("font-family", css_font_family), # <--- 关键修改
+                ("font-family", css_font_family),
             ],
         ),
         dict(
@@ -148,7 +216,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None =
                 ("text-align", "left"),
                 ("border-bottom", "1px solid #e5e7eb"),
                 ("vertical-align", "top"),
-                ("font-family", css_font_family), # <--- 关键修改
+                ("font-family", css_font_family),
             ],
         ),
         dict(
@@ -160,7 +228,7 @@ def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None =
                 ("padding", "10px"),
                 ("color", "black"),
                 ("text-align", "center"),
-                ("font-family", css_font_family), # <--- 关键修改
+                ("font-family", css_font_family),
             ],
         ),
     ]
@@ -173,10 +241,12 @@ def render_md_table_to_png(raw_csv: str, output_path: str, caption: str | None =
             "font-size": "12pt",
             "color": "#111827",
             "line-height": "1.6",
-            "font-family": css_font_family, # <--- 再次保险
+            "font-family": css_font_family, # 再次兜底
         }
     )
-    styled = styled.set_properties(subset=[df.columns[0]], **{"font-weight": "bold"})
+    # 第一列加粗
+    if len(df.columns) > 0:
+        styled = styled.set_properties(subset=[df.columns[0]], **{"font-weight": "bold"})
 
     if hasattr(styled, "hide_index"):
         styled = styled.hide_index()
@@ -196,25 +266,25 @@ def generate_table_image_file(raw_csv: str | None = None, caption: str | None = 
     try:
         return render_md_table_to_png(table_content, output_path, caption=caption)
     except Exception:
-        logging.exception("渲染 CSV 表格图片失败")
+        logging.exception("渲染表格图片失败")
         raise
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render CSV (with <<<DATA_START/END>>> placeholder) to PNG.")
-    parser.add_argument("--input", "-i", help="CSV text file containing placeholders; defaults to built-in sample.")
+    parser = argparse.ArgumentParser(description="Render JSON/CSV to PNG.")
+    parser.add_argument("--input", "-i", help="Input text file; defaults to built-in sample.")
     parser.add_argument("--output", "-o", help="Output PNG path", default="table_output_final.png")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
     if args.input:
-        raw_csv = Path(args.input).read_text(encoding="utf-8")
+        raw_content = Path(args.input).read_text(encoding="utf-8")
     else:
-        raw_csv = DEFAULT_CSV_RAW
+        raw_content = DEFAULT_CSV_RAW
 
     output_path = Path(args.output)
-    render_md_table_to_png(raw_csv, str(output_path))
+    render_md_table_to_png(raw_content, str(output_path))
     print(f"图片已生成: {output_path}")
 
 
