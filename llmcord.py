@@ -54,7 +54,7 @@ last_task_time = 0
 
 intents = discord.Intents.default()
 intents.message_content = True
-activity = discord.CustomActivity(name=(config.get("status_message") or "github.com/jakobdylanc/llmcord")[:128])
+activity = discord.CustomActivity(name=(config.get("status_message") or "summary bot")[:128])
 discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
 
 httpx_client = httpx.AsyncClient()
