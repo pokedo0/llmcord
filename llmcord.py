@@ -247,10 +247,10 @@ async def on_ready() -> None:
 @discord_bot.event
 async def on_message(new_msg: discord.Message) -> None:
     global last_task_time
-
     if new_msg.author.id == getattr(discord_bot.user, "id", None):
         return
     if new_msg.author.bot and new_msg.author.id not in BOT_WHITELIST:
+        logging.info("Ignored bot message (user_id=%s) not in bot_whitelist=%s", new_msg.author.id, BOT_WHITELIST)
         return
 
     is_dm = new_msg.channel.type == discord.ChannelType.private
@@ -263,13 +263,20 @@ async def on_message(new_msg: discord.Message) -> None:
     permissions = config["permissions"]
 
     user_is_admin = new_msg.author.id in permissions["users"]["admin_ids"]
+    bot_whitelisted = new_msg.author.bot and new_msg.author.id in BOT_WHITELIST
 
     (allowed_user_ids, blocked_user_ids), (allowed_role_ids, blocked_role_ids), (allowed_channel_ids, blocked_channel_ids) = (
         (perm["allowed_ids"], perm["blocked_ids"]) for perm in (permissions["users"], permissions["roles"], permissions["channels"])
     )
 
     allow_all_users = not allowed_user_ids if is_dm else not allowed_user_ids and not allowed_role_ids
-    is_good_user = user_is_admin or allow_all_users or new_msg.author.id in allowed_user_ids or any(id in allowed_role_ids for id in role_ids)
+    is_good_user = (
+        user_is_admin
+        or bot_whitelisted
+        or allow_all_users
+        or new_msg.author.id in allowed_user_ids
+        or any(id in allowed_role_ids for id in role_ids)
+    )
     is_bad_user = not is_good_user or new_msg.author.id in blocked_user_ids or any(id in blocked_role_ids for id in role_ids)
 
     allow_all_channels = not allowed_channel_ids
