@@ -16,7 +16,7 @@ if not hasattr(enum, "StrEnum"):
 from gemini_webapi import GeminiClient, GeminiError  # type: ignore
 from gemini_webapi.constants import Model
 import yaml
-from csv_summary_img import DATA_START, DATA_END, extract_csv_payload, generate_table_image_file
+from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 
 DEFAULT_YOUTUBE_MODEL = "gemini-2.5-flash"
 DEFAULT_YOUTUBE_PROMPT_PATH = "youtube-summary-prompt.txt"
@@ -203,18 +203,18 @@ def _extract_summary(resp: Any) -> Optional[str]:
     return None
 
 
-def _split_summary_and_csv(summary: str) -> tuple[str, Optional[str]]:
-    """Return (clean_text, csv_payload_if_any). Removes placeholder block from text."""
+def _split_summary_and_table(summary: str) -> tuple[str, Optional[str]]:
+    """Return (clean_text, table_payload_if_any). Removes placeholder block from text."""
     if not summary:
         return "", None
 
     start_idx = summary.find(DATA_START)
     end_idx = summary.find(DATA_END, start_idx + len(DATA_START)) if start_idx != -1 else -1
     if start_idx != -1 and end_idx != -1:
-        csv_block = summary[start_idx : end_idx + len(DATA_END)]
-        csv_payload = extract_csv_payload(csv_block)
+        table_block = summary[start_idx : end_idx + len(DATA_END)]
+        table_payload = extract_table_payload(table_block)
         cleaned = (summary[:start_idx] + summary[end_idx + len(DATA_END) :]).strip()
-        return cleaned, csv_payload
+        return cleaned, table_payload
 
     return summary, None
 
@@ -335,7 +335,7 @@ async def maybe_handle_youtube_summary(
 
     summary = summary.replace(UNWANTED_SNIPPET, "")
 
-    clean_text, csv_payload = _split_summary_and_csv(summary)
+    clean_text, table_payload = _split_summary_and_table(summary)
 
     if clean_text:
         logging.info("YouTube summary success (channel_id=%s, user_id=%s)", new_msg.channel.id, new_msg.author.id)
@@ -353,11 +353,11 @@ async def maybe_handle_youtube_summary(
 
             await new_msg.reply(embeds=embeds, mention_author=False)
 
-    if csv_payload:
+    if table_payload:
         caption = next((embed.title for embed in new_msg.embeds if getattr(embed, "title", None)), None)
         caption = f"总结: {caption}" if caption else None
         try:
-            png_path = await asyncio.to_thread(generate_table_image_file, csv_payload, caption)
+            png_path = await asyncio.to_thread(generate_table_image_file, table_payload, caption)
             file = discord.File(png_path, filename=os.path.basename(png_path))
             await new_msg.reply(content="", file=file, mention_author=False)
         finally:

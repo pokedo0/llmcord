@@ -13,7 +13,7 @@ from discord.ui import LayoutView, TextDisplay
 import httpx
 from openai import AsyncOpenAI
 import yaml
-from csv_summary_img import generate_table_image_file
+from table_summary_img import generate_table_image_file
 from youtube_summary import (
     maybe_handle_youtube_summary,
     persist_youtube_cookies,
