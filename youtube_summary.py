@@ -358,6 +358,8 @@ async def maybe_handle_youtube_summary(
         caption = f"总结: {caption}" if caption else None
         try:
             png_path = await asyncio.to_thread(generate_table_image_file, table_payload, caption)
+            if png_path is None:
+                return
             file = discord.File(png_path, filename=os.path.basename(png_path))
             await new_msg.reply(content="", file=file, mention_author=False)
         finally:

@@ -172,6 +172,8 @@ def render_md_table_to_png(raw_payload: str, output_path: str, caption: str | No
     # 这一步很重要，因为 JSON 可能包含 null/None
     df = df.astype(str).replace("nan", "").replace("None", "")
     logging.info("表格解析方式=%s, 维度=%s", used_parser, df.shape)
+    if df.empty or len(df.columns) == 0:
+        raise ValueError("空表格，跳过图片生成")
 
     # 5. 表格排版与自动换行
     # 根据列数动态调整宽度，防止太宽或太窄
@@ -259,7 +261,7 @@ def render_md_table_to_png(raw_payload: str, output_path: str, caption: str | No
     return output_path
 
 
-def generate_table_image_file(raw_table: str | None = None, caption: str | None = None) -> str:
+def generate_table_image_file(raw_table: str | None = None, caption: str | None = None) -> str | None:
     table_content = (raw_table or DEFAULT_TABLE_RAW).strip()
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         output_path = tmp.name
@@ -267,7 +269,7 @@ def generate_table_image_file(raw_table: str | None = None, caption: str | None 
         return render_md_table_to_png(table_content, output_path, caption=caption)
     except Exception:
         logging.exception("渲染表格图片失败")
-        raise
+        return None
 
 
 def main() -> None:
