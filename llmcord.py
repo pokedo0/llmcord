@@ -58,6 +58,7 @@ activity = discord.CustomActivity(name=(config.get("status_message") or "summary
 discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
 
 httpx_client = httpx.AsyncClient()
+BOT_WHITELIST: set[int] = set(config.get("permissions", {}).get("bot_whitelist", []))  # allowed bot user IDs
 
 
 async def require_admin(interaction: discord.Interaction) -> tuple[bool, dict[str, Any]]:
@@ -247,7 +248,9 @@ async def on_ready() -> None:
 async def on_message(new_msg: discord.Message) -> None:
     global last_task_time
 
-    if new_msg.author.bot:
+    if new_msg.author.id == getattr(discord_bot.user, "id", None):
+        return
+    if new_msg.author.bot and new_msg.author.id not in BOT_WHITELIST:
         return
 
     is_dm = new_msg.channel.type == discord.ChannelType.private

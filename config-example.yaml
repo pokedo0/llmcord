@@ -12,6 +12,7 @@ use_plain_responses: false
 allow_dms: true
 
 permissions:
+  bot_whitelist: []  # optional: allow specific bot user IDs to be processed
   users:
     admin_ids: []
     allowed_ids: []
