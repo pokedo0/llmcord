@@ -1,10 +1,11 @@
 services:
   container:
-    build: .
+    image: ${IMAGE:-ghcr.io/pokedo0/llmcord:latest}
+    pull_policy: always
     network_mode: host
     restart: unless-stopped
     environment:
       GEMINI_COOKIE_PATH: /tmp/gemini_webapi
     volumes:
-      - ./:/app
+      - ./config.yaml:/app/config.yaml
       - ./gemini_cookies:/tmp/gemini_webapi
