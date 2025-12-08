@@ -235,7 +235,7 @@ async def summarize_youtube_video(
     client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
 
     try:
-        await client.init(timeout=30, auto_close=False, close_delay=300, auto_refresh=True)
+        await client.init(auto_refresh=True)
         resp = await client.generate_content(prompt=prompt_text, model=model)
     except GeminiError:
         logging.exception("Gemini webapi request failed")
