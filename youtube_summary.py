@@ -337,25 +337,9 @@ async def maybe_handle_youtube_summary(
 
     summary = summary.replace(UNWANTED_SNIPPET, "")
 
-    clean_text, table_payload = _split_summary_and_table(summary)
 
-    if clean_text:
-        logging.info("YouTube summary success (channel_id=%s, user_id=%s)", new_msg.channel.id, new_msg.author.id)
-        embed_batches = split_text_for_embeds(clean_text)
-        first_embed_with_url = True
-
-        for batch in embed_batches:
-            embeds: list[discord.Embed] = []
-            for desc in batch:
-                embed_kwargs: dict[str, Any] = {"description": desc, "color": discord.Color.blurple()}
-                if first_embed_with_url:
-                    embed_kwargs["url"] = url
-                    first_embed_with_url = False
-                embeds.append(discord.Embed(**embed_kwargs))
-
-            await new_msg.reply(embeds=embeds, mention_author=False)
-
-    elif RETRY_MARKER in summary:
+    # 1. 优先处理重试逻辑
+    if RETRY_MARKER in summary:
         # 提取并发送警告信息
         clean_summary = summary.replace(RETRY_MARKER, "").strip()
         await new_msg.reply(content=clean_summary, mention_author=False)
@@ -379,6 +363,26 @@ async def maybe_handle_youtube_summary(
                 await maybe_handle_youtube_summary(new_msg, new_cfg, is_good_user, is_good_channel, is_dm, retry_count + 1)
 
             asyncio.create_task(_retry_task())
+        return
+
+    # 2. 处理正常总结逻辑
+    clean_text, table_payload = _split_summary_and_table(summary)
+
+    if clean_text:
+        logging.info("YouTube summary success (channel_id=%s, user_id=%s)", new_msg.channel.id, new_msg.author.id)
+        embed_batches = split_text_for_embeds(clean_text)
+        first_embed_with_url = True
+
+        for batch in embed_batches:
+            embeds: list[discord.Embed] = []
+            for desc in batch:
+                embed_kwargs: dict[str, Any] = {"description": desc, "color": discord.Color.blurple()}
+                if first_embed_with_url:
+                    embed_kwargs["url"] = url
+                    first_embed_with_url = False
+                embeds.append(discord.Embed(**embed_kwargs))
+
+            await new_msg.reply(embeds=embeds, mention_author=False)
 
     if table_payload:
         caption = next((embed.title for embed in new_msg.embeds if getattr(embed, "title", None)), None)
@@ -421,7 +425,12 @@ if __name__ == "__main__":
     async def _run() -> None:
         summary = await summarize_youtube_video(args.url, prompt, yt_cfg, cookies, proxy=yt_cfg.get("proxy"))
         if summary:
-            print(summary)
+            if RETRY_MARKER in summary:
+                print("\n--- [RETRY DETECTED] ---")
+                print(summary.replace(RETRY_MARKER, "").strip())
+                print("------------------------\n")
+            else:
+                print(summary)
         else:
             print("No summary returned.")
 
