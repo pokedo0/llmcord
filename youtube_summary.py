@@ -34,7 +34,7 @@ EMBED_MAX_PER_MESSAGE = 10
 
 youtube_watch_channels: dict[int, Optional[str]] = {}
 UNWANTED_SNIPPET = "http://googleusercontent.com/youtube_content/0"
-RETRY_MARKER = "<<RETRY>>"
+RETRY_MARKER_RE = re.compile(r"\\?<{1,2}RETRY\\?>{1,2}", re.IGNORECASE)
 
 
 def read_config(filename: str = "config.yaml") -> dict[str, Any]:
@@ -339,9 +339,11 @@ async def maybe_handle_youtube_summary(
 
 
     # 1. 优先处理重试逻辑
-    if RETRY_MARKER in summary:
+    if RETRY_MARKER_RE.search(summary):
         # 提取并发送警告信息
-        clean_summary = summary.replace(RETRY_MARKER, "").strip()
+        clean_summary = RETRY_MARKER_RE.sub("", summary).strip()
+        # 还要由于可能存在的转义，把 \<\< 还原成 << 发送给用户更美观（可选）
+        clean_summary = clean_summary.replace("\\<", "<").replace("\\>", ">")
         await new_msg.reply(content=clean_summary, mention_author=False)
 
         # 检查重试次数
@@ -425,9 +427,9 @@ if __name__ == "__main__":
     async def _run() -> None:
         summary = await summarize_youtube_video(args.url, prompt, yt_cfg, cookies, proxy=yt_cfg.get("proxy"))
         if summary:
-            if RETRY_MARKER in summary:
+            if RETRY_MARKER_RE.search(summary):
                 print("\n--- [RETRY DETECTED] ---")
-                print(summary.replace(RETRY_MARKER, "").strip())
+                print(RETRY_MARKER_RE.sub("", summary).strip())
                 print("------------------------\n")
             else:
                 print(summary)
