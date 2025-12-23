@@ -18,7 +18,7 @@ from gemini_webapi.constants import Model
 import yaml
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 
-DEFAULT_YOUTUBE_MODEL = "gemini-2.5-flash"
+DEFAULT_YOUTUBE_MODEL = "unspecified"
 DEFAULT_YOUTUBE_PROMPT_PATH = "youtube-summary-prompt.txt"
 DEFAULT_YOUTUBE_PROMPT = (
     "Summarize the YouTube video at {url}. Give the core topic, 5 concise bullet points "
@@ -34,6 +34,7 @@ EMBED_MAX_PER_MESSAGE = 10
 
 youtube_watch_channels: dict[int, Optional[str]] = {}
 UNWANTED_SNIPPET = "http://googleusercontent.com/youtube_content/0"
+RETRY_MARKER = "<<RETRY>>"
 
 
 def read_config(filename: str = "config.yaml") -> dict[str, Any]:
@@ -279,6 +280,7 @@ async def maybe_handle_youtube_summary(
     is_good_user: bool,
     is_good_channel: bool,
     is_dm: bool,
+    retry_count: int = 0,
 ) -> None:
     youtube_config = config.get("youtube_summary", {})
 
@@ -352,6 +354,31 @@ async def maybe_handle_youtube_summary(
                 embeds.append(discord.Embed(**embed_kwargs))
 
             await new_msg.reply(embeds=embeds, mention_author=False)
+
+    elif RETRY_MARKER in summary:
+        # 提取并发送警告信息
+        clean_summary = summary.replace(RETRY_MARKER, "").strip()
+        await new_msg.reply(content=clean_summary, mention_author=False)
+
+        # 检查重试次数
+        if retry_count < 1:  # 限制最大自动重试次数为 1 次
+            youtube_config = config.get("youtube_summary", {})
+            delay = youtube_config.get("retry_delay_seconds", 600)
+            
+            logging.info("Scheduling retry in %s seconds for channel %s", delay, new_msg.channel.id)
+            
+            async def _retry_task():
+                await asyncio.sleep(delay)
+                # 重新加载配置以获取最新的 Cookie（如果已更新）
+                try:
+                    new_cfg = read_config()
+                except Exception:
+                    new_cfg = config
+                
+                logging.info("Executing retry for channel %s", new_msg.channel.id)
+                await maybe_handle_youtube_summary(new_msg, new_cfg, is_good_user, is_good_channel, is_dm, retry_count + 1)
+
+            asyncio.create_task(_retry_task())
 
     if table_payload:
         caption = next((embed.title for embed in new_msg.embeds if getattr(embed, "title", None)), None)
