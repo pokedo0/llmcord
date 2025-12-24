@@ -323,6 +323,11 @@ async def maybe_handle_youtube_summary(
 
     logging.info("Summarizing YouTube video for channel %s (user ID: %s): %s", new_msg.channel.id, new_msg.author.id, url)
 
+    post_delay = youtube_config.get("post_delay_seconds", 0)
+    if post_delay > 0:
+        logging.info("Waiting %s seconds before summarizing (post_delay_seconds)", post_delay)
+        await asyncio.sleep(post_delay)
+
     async with new_msg.channel.typing():
         summary = await summarize_youtube_video(
             url, prompt_text, youtube_config, cookies, proxy=youtube_config.get("proxy")

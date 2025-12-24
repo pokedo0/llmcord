@@ -93,4 +93,5 @@ youtube_summary:
   secure_1psid: ""      # __Secure-1PSID cookie for gemini_webapi
   secure_1psidts: ""    # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
+  post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
   watch_channels: []  # Optional: pre-enable specific channel IDs to survive restarts
