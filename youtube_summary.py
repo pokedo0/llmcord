@@ -19,7 +19,7 @@ import yaml
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 
 DEFAULT_YOUTUBE_MODEL = "unspecified"
-DEFAULT_YOUTUBE_PROMPT_PATH = "youtube-summary-prompt.txt"
+DEFAULT_YOUTUBE_PROMPT_PATH = "config/youtube-summary-prompt.txt"
 DEFAULT_YOUTUBE_PROMPT = (
     "Summarize the YouTube video at {url}. Give the core topic, 5 concise bullet points "
     "with timestamps if available, and a short takeaway tailored to this channel."
@@ -37,7 +37,7 @@ UNWANTED_SNIPPET = "http://googleusercontent.com/youtube_content/0"
 RETRY_MARKER_RE = re.compile(r"\\?<{1,2}RETRY\\?>{1,2}", re.IGNORECASE)
 
 
-def read_config(filename: str = "config.yaml") -> dict[str, Any]:
+def read_config(filename: str = "config/config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
         return yaml.safe_load(file)
 
@@ -96,8 +96,21 @@ def resolve_gemini_model(youtube_config: dict[str, Any]) -> Model:
 
 
 def get_gemini_cookies(config: dict[str, Any], youtube_config: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
-    secure_1psid = youtube_config.get("secure_1psid") or os.getenv("__Secure-1PSID") or os.getenv("SECURE_1PSID")
-    secure_1psidts = youtube_config.get("secure_1psidts") or os.getenv("__Secure-1PSIDTS") or os.getenv("SECURE_1PSIDTS")
+    # 1. Try "gemini" block (new shared location)
+    gemini_cfg = config.get("gemini", {})
+    secure_1psid = gemini_cfg.get("secure_1psid")
+    secure_1psidts = gemini_cfg.get("secure_1psidts")
+
+    # 2. Fallback to "youtube_summary" block (legacy) if not found in shared block
+    if not secure_1psid:
+        secure_1psid = youtube_config.get("secure_1psid")
+    if not secure_1psidts:
+        secure_1psidts = youtube_config.get("secure_1psidts")
+        
+    # 3. Fallback to env vars
+    secure_1psid = secure_1psid or os.getenv("__Secure-1PSID") or os.getenv("SECURE_1PSID")
+    secure_1psidts = secure_1psidts or os.getenv("__Secure-1PSIDTS") or os.getenv("SECURE_1PSIDTS")
+
     if not secure_1psid:
         return None, None
     return secure_1psid, secure_1psidts
@@ -111,24 +124,31 @@ def persist_youtube_cookies(
 ) -> bool:
     try:
         cfg = read_config()
-        yt_cfg = cfg.setdefault("youtube_summary", {}) or {}
+        # Update shared 'gemini' block
+        gemini_cfg = cfg.setdefault("gemini", {}) or {}
+        
+        # Also check for legacy fields to potentially clear/migrate them? 
+        # For now, we just write to the new location.
+        # If users have old config, reading logic handles fallback.
+        # But if they use /ysession, we enforce new structure.
 
-        current_psid = yt_cfg.get("secure_1psid", "") or ""
-        current_psidts = yt_cfg.get("secure_1psidts", "") or ""
+        current_psid = gemini_cfg.get("secure_1psid", "") or ""
+        current_psidts = gemini_cfg.get("secure_1psidts", "") or ""
 
         new_psid = "" if clear_1psid else (secure_1psid.strip() if secure_1psid is not None else current_psid)
         new_psidts = "" if clear_1psidts else (secure_1psidts.strip() if secure_1psidts is not None else current_psidts)
 
-        yt_cfg["secure_1psid"] = new_psid
-        yt_cfg["secure_1psidts"] = new_psidts
+        gemini_cfg["secure_1psid"] = new_psid
+        gemini_cfg["secure_1psidts"] = new_psidts
+        cfg["gemini"] = gemini_cfg # Put it back to ensure it's set
 
-        with open("config.yaml", "w", encoding="utf-8") as f:
+        with open("config/config.yaml", "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
 
-        logging.info("Updated youtube_summary cookies in config.yaml")
+        logging.info("Updated gemini cookies in config.yaml")
         return True
     except Exception:
-        logging.exception("Failed to update youtube_summary cookies")
+        logging.exception("Failed to update gemini cookies")
         return False
 
 
@@ -266,7 +286,7 @@ def persist_watch_channel(channel_id: int, enabled: bool) -> None:
 
         youtube_cfg["watch_channels"] = sorted(watch_channels)
 
-        with open("config.yaml", "w", encoding="utf-8") as f:
+        with open("config/config.yaml", "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
 
         logging.info("Persisted youtube_summary.watch_channels=%s", youtube_cfg["watch_channels"])

@@ -86,12 +86,19 @@ system_prompt: |
 
   Today's date is {date}. The current time is {time}.
 
+# Gemini settings (Shared by youtube_summary & finance_calendar):
+gemini:
+  secure_1psid: ""      # __Secure-1PSID cookie for gemini_webapi
+  secure_1psidts: ""    # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
+
 youtube_summary:
   enabled: true
   model: unspecified
   prompt_file: youtube-summary-prompt.txt
-  secure_1psid: ""      # __Secure-1PSID cookie for gemini_webapi
-  secure_1psidts: ""    # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
   post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
   watch_channels: []  # Optional: pre-enable specific channel IDs to survive restarts
+
+finance_calendar:
+  enabled: true
+  channels: []  # List of channel IDs to auto-send the compiled calendar summary

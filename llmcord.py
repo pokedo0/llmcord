@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 
 import discord
 from discord.app_commands import Choice
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import LayoutView, TextDisplay
 import httpx
 from openai import AsyncOpenAI
@@ -21,6 +21,7 @@ from youtube_summary import (
     youtube_watch_channels,
     write_prompt_file,
 )
+import finance_calendar
 
 log_level_name = os.getenv("LOGLEVEL", "INFO").upper()
 log_level = logging._nameToLevel.get(log_level_name, logging.INFO)
@@ -41,7 +42,7 @@ EDIT_DELAY_SECONDS = 1
 
 MAX_MESSAGE_NODES = 500
 
-def get_config(filename: str = "config.yaml") -> dict[str, Any]:
+def get_config(filename: str = "config/config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
         return yaml.safe_load(file)
 
@@ -236,12 +237,71 @@ async def test_command(interaction: discord.Interaction) -> None:
             pass
 
 
+@discord_bot.tree.command(name="calendar", description="Toggle weekly finance calendar subscription for this channel")
+async def calendar_command(interaction: discord.Interaction, enabled: bool = True) -> None:
+    is_admin, _ = await require_admin(interaction)
+    if not is_admin:
+        return
+
+    # Toggle subscription based on 'enabled' argument
+    # If enabled=True, we add (remove=False); If enabled=False, we remove (remove=True)
+    remove = not enabled
+    
+    success = await asyncio.to_thread(finance_calendar.save_calendar_channel, interaction.channel.id, remove=remove)
+    
+    if success:
+        if enabled:
+            await interaction.response.send_message(
+                f"✅ 此频道已订阅财经日历。将在每周日早上 8:00 (服务器时间) 自动发送: {finance_calendar.TABLE_CAPTION}\n(使用 `/calendar enabled:False` 取消订阅)", 
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message("❌ 此频道已取消订阅财经日历。", ephemeral=True)
+    else:
+        await interaction.response.send_message("⚠️ 操作失败，保存配置时出错。", ephemeral=True)
+
+
+@discord_bot.tree.command(name="testcal", description="Test the finance calendar summary immediately")
+async def testcal_command(interaction: discord.Interaction) -> None:
+    is_admin, _ = await require_admin(interaction)
+    if not is_admin:
+        return
+
+    # Show "Thinking..." state
+    await interaction.response.defer(thinking=True, ephemeral=False)
+    
+    # Use a background task to avoid blocking or timeout
+    async def _run():
+        await finance_calendar.run_calendar_task(discord_bot, force_channel_id=interaction.channel.id)
+        await interaction.delete_original_response()
+
+    asyncio.create_task(_run())
+
+
+# 使用 discord.ext.tasks 实现定时任务
+# time=datetime.time(hour=0) 表示UTC时间的0点(即北京时间8点)，
+# 或者我们在函数内判断时间简化时区问题，这里采用每小时检查一次 + 内部判断日期的策略，
+# 或者更精准地，每分钟检查一次，但 tasks.loop 支持指定 time 参数 (需注意时区)
+# 鉴于 LLM 响应不一定要秒级精确，这里使用简单的 loop 配合内部判断保持 Robust
+@tasks.loop(minutes=60)
+async def calendar_task_loop():
+    logging.info("Checking calendar schedule...")
+    try:
+        await finance_calendar.check_and_run_schedule(discord_bot)
+    except Exception:
+        logging.exception("Error in calendar task loop")
+
+
 @discord_bot.event
 async def on_ready() -> None:
     if client_id := config.get("client_id"):
         logging.info(f"\n\nBOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id={client_id}&permissions=412317191168&scope=bot\n")
 
     await discord_bot.tree.sync()
+    
+    # Start the calendar scheduler
+    if not calendar_task_loop.is_running():
+        calendar_task_loop.start()
 
 
 @discord_bot.event
