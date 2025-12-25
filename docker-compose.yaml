@@ -8,5 +8,5 @@ services:
     environment:
       GEMINI_COOKIE_PATH: /tmp/gemini_webapi
     volumes:
-      - ./config.yaml:/app/config.yaml
+      - ./config:/app/config
       - ./gemini_cookies:/tmp/gemini_webapi
