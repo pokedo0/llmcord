@@ -94,7 +94,7 @@ gemini:
 youtube_summary:
   enabled: true
   model: unspecified
-  prompt_file: youtube-summary-prompt.txt
+  prompt_file: config/youtube-summary-prompt.txt
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
   post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
   watch_channels: []  # Optional: pre-enable specific channel IDs to survive restarts
