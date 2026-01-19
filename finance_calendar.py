@@ -196,7 +196,7 @@ async def check_and_run_schedule(bot: discord.Client):
     now = datetime.now()
     
     # 周日=6, 8点
-    if now.weekday() == 6 and now.hour == 8:
+    if now.weekday() == 5 and now.hour == 8:
         # 简单防重：如果今天已经发过了，就不发
         today_str = now.strftime("%Y-%m-%d")
         if last_sent_date_str == today_str:
