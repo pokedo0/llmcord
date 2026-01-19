@@ -36,6 +36,18 @@ youtube_watch_channels: dict[int, Optional[str]] = {}
 UNWANTED_SNIPPET = "http://googleusercontent.com/youtube_content/0"
 RETRY_MARKER_RE = re.compile(r"\\?<{1,2}RETRY\\?>{1,2}", re.IGNORECASE)
 
+# Minimum length for a valid summary (shorter responses are likely failures)
+MIN_SUMMARY_LENGTH = 50
+
+def _is_failed_summary(text: str) -> bool:
+    """Check if the summary text is too short (likely a failure response)."""
+    if not text:
+        return True
+    text_stripped = text.strip()
+    if len(text_stripped) < MIN_SUMMARY_LENGTH:
+        logging.info("Summary too short (%d chars < %d), treating as failure", len(text_stripped), MIN_SUMMARY_LENGTH)
+        return True
+    return False
 
 def read_config(filename: str = "config/config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
@@ -364,12 +376,19 @@ async def maybe_handle_youtube_summary(
     summary = summary.replace(UNWANTED_SNIPPET, "")
 
 
-    # 1. 优先处理重试逻辑
-    if RETRY_MARKER_RE.search(summary):
+    # 1. 优先处理重试逻辑 (显式 RETRY 标记 或 检测到失败响应)
+    has_retry_marker = RETRY_MARKER_RE.search(summary)
+    is_failed = _is_failed_summary(summary)
+    
+    if has_retry_marker or is_failed:
         # 提取并发送警告信息
-        clean_summary = RETRY_MARKER_RE.sub("", summary).strip()
-        # 还要由于可能存在的转义，把 \<\< 还原成 << 发送给用户更美观（可选）
-        clean_summary = clean_summary.replace("\\<", "<").replace("\\>", ">")
+        if has_retry_marker:
+            clean_summary = RETRY_MARKER_RE.sub("", summary).strip()
+            clean_summary = clean_summary.replace("\\<", "<").replace("\\>", ">")
+        else:
+            # 对于检测到的失败响应，生成一个友好的提示信息
+            clean_summary = f"⚠️ 视频总结失败（AI 返回了无效响应），将在稍后自动重试。\n\n原始响应: {summary[:200]}{'...' if len(summary) > 200 else ''}"
+        
         await new_msg.reply(content=clean_summary, mention_author=False)
 
         # 检查重试次数
@@ -377,7 +396,8 @@ async def maybe_handle_youtube_summary(
             youtube_config = config.get("youtube_summary", {})
             delay = youtube_config.get("retry_delay_seconds", 600)
             
-            logging.info("Scheduling retry in %s seconds for channel %s", delay, new_msg.channel.id)
+            logging.info("Scheduling retry in %s seconds for channel %s (marker=%s, failed=%s)", 
+                        delay, new_msg.channel.id, has_retry_marker, is_failed)
             
             async def _retry_task():
                 await asyncio.sleep(delay)
