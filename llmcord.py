@@ -242,7 +242,7 @@ async def test_command(interaction: discord.Interaction) -> None:
             pass
 
 
-@discord_bot.tree.command(name="calendar", description="Toggle weekly finance calendar subscription for this channel")
+@discord_bot.tree.command(name="calendar", description="Toggle every-two-days finance calendar subscription for this channel")
 async def calendar_command(interaction: discord.Interaction, enabled: bool = True) -> None:
     is_admin, _ = await require_admin(interaction)
     if not is_admin:
@@ -257,7 +257,7 @@ async def calendar_command(interaction: discord.Interaction, enabled: bool = Tru
     if success:
         if enabled:
             await interaction.response.send_message(
-                f"✅ 此频道已订阅财经日历。将在每周日早上 8:00 (服务器时间) 自动发送: {finance_calendar.TABLE_CAPTION}\n(使用 `/calendar enabled:False` 取消订阅)", 
+                f"✅ 此频道已订阅财经日历。将每隔两天早上 8:00 (服务器时间) 自动发送: {finance_calendar.TABLE_CAPTION}\n(使用 `/calendar enabled:False` 取消订阅)", 
                 ephemeral=True
             )
         else:

@@ -190,13 +190,13 @@ async def run_calendar_task(bot: discord.Client, force_channel_id: Optional[int]
 async def check_and_run_schedule(bot: discord.Client):
     """
     定时检查函数，需在主 loop 中运行。
-    规则：每周日 (weekday=6) 8:00 执行。
+    规则：每隔两天 8:00 执行。
     """
     global last_sent_date_str
     now = datetime.now()
     
-    # 周日=6, 8点
-    if now.weekday() == 5 and now.hour == 8:
+    # 每隔两天，8点
+    if now.toordinal() % 2 == 0 and now.hour == 8:
         # 简单防重：如果今天已经发过了，就不发
         today_str = now.strftime("%Y-%m-%d")
         if last_sent_date_str == today_str:
