@@ -100,8 +100,7 @@ youtube_summary:
 
 research_report:
   enabled: true
-  model: unspecified # Gemini model for summarisation (must support file uploads)
-  api_key: "" # Optional: dedicated Gemini API key; falls back to gemini.api_key or providers.google.api_key
+  model: unspecified # Gemini model for summarisation (uses gemini_webapi with cookies)
   prompt_file: config/research-prompt.txt
   watch_channels: [] # Optional: pre-enable specific channel IDs to survive restarts
 

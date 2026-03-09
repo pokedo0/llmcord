@@ -8,8 +8,18 @@ from typing import Any, Optional
 import discord
 import yaml
 
+from gemini_webapi import GeminiClient, GeminiError
+from gemini_webapi.constants import Model
+
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
-from youtube_summary import split_text_for_embeds, _split_summary_and_table, read_config, load_prompt_file
+from youtube_summary import (
+    split_text_for_embeds,
+    _split_summary_and_table,
+    read_config,
+    load_prompt_file,
+    get_gemini_cookies,
+    resolve_gemini_model,
+)
 
 # ────────────────────────────
 #  Constants
@@ -51,6 +61,16 @@ def load_research_prompt(research_config: dict[str, Any]) -> str:
     return load_prompt_file(prompt_path, DEFAULT_RESEARCH_PROMPT)
 
 
+def resolve_research_model(research_config: dict[str, Any]) -> Model:
+    """Resolve the Gemini model for research reports. Falls back to unspecified."""
+    name = research_config.get("model") or "unspecified"
+    try:
+        return Model.from_name(name)
+    except Exception:
+        logging.warning("Invalid research Gemini model '%s', falling back to unspecified", name)
+        return Model.from_name("unspecified")
+
+
 def persist_research_channel(channel_id: int, enabled: bool) -> None:
     """Persist a channel in / out of research_report.watch_channels in config.yaml."""
     try:
@@ -89,7 +109,7 @@ def _get_supported_attachments(msg: discord.Message) -> list[discord.Attachment]
 
 
 # ────────────────────────────
-#  Gemini interaction (with file upload)
+#  Gemini interaction (gemini_webapi with cookies + file upload)
 # ────────────────────────────
 
 async def _summarize_with_gemini(
@@ -97,57 +117,51 @@ async def _summarize_with_gemini(
     attachment_paths: list[str],
     config: dict[str, Any],
 ) -> Optional[str]:
-    """Upload files + prompt to Gemini via google-genai SDK and return the response text."""
-    from google import genai
-    from google.genai import types
+    """Upload files + prompt to Gemini via gemini_webapi and return the response text."""
 
     research_config = config.get("research_report", {})
-    gemini_cfg = config.get("gemini", {})
 
-    # Determine API key — try research_report.api_key → gemini.api_key → providers.google.api_key
-    api_key = (
-        research_config.get("api_key")
-        or gemini_cfg.get("api_key")
-        or config.get("providers", {}).get("google", {}).get("api_key")
-    )
+    # Use shared Gemini cookies (same as youtube_summary)
+    cookies = get_gemini_cookies(config, research_config)
+    secure_1psid, secure_1psidts = cookies
 
-    if not api_key:
-        logging.warning("No Gemini API key found for research report summarisation.")
+    if not secure_1psid:
+        logging.warning("Missing __Secure-1PSID cookie for research report Gemini webapi.")
         return None
 
-    model_name = research_config.get("model", "gemini-2.5-flash")
+    model = resolve_research_model(research_config)
+    proxy = research_config.get("proxy")
 
-    client = genai.Client(api_key=api_key)
+    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
 
     try:
-        # Upload each file
-        uploaded_files = []
-        for fpath in attachment_paths:
-            logging.info("Uploading file to Gemini: %s", fpath)
-            uploaded = await asyncio.to_thread(
-                client.files.upload, file=fpath
-            )
-            uploaded_files.append(uploaded)
-            logging.info("Uploaded file: name=%s, uri=%s", uploaded.name, uploaded.uri)
+        await client.init(auto_refresh=True)
 
-        # Build prompt contents: text prompt + file parts
-        contents: list[Any] = [prompt_text]
-        for uf in uploaded_files:
-            contents.append(uf)
-
-        logging.info("Sending research prompt to Gemini model=%s with %d file(s)", model_name, len(uploaded_files))
-
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=model_name,
-            contents=contents,
+        logging.info(
+            "Sending research prompt to Gemini (model=%s) with %d file(s): %s",
+            model, len(attachment_paths), attachment_paths,
         )
 
-        return response.text.strip() if response.text else None
+        # gemini_webapi generate_content supports `files: list[str | Path]`
+        resp = await client.generate_content(
+            prompt=prompt_text,
+            files=attachment_paths,
+            model=model,
+        )
 
-    except Exception:
-        logging.exception("Error calling Gemini genai SDK for research report")
+        return resp.text.strip() if getattr(resp, "text", None) else None
+
+    except GeminiError:
+        logging.exception("Gemini webapi request failed for research report")
         return None
+    except Exception:
+        logging.exception("Unexpected error calling Gemini webapi for research report")
+        return None
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            logging.exception("Failed to close Gemini client cleanly")
 
 
 # ────────────────────────────
@@ -251,6 +265,7 @@ async def maybe_handle_research_report(
 
     # Send table image
     if table_payload:
+        png_path = None
         caption_parts = [att.filename for att in supported[:3]]
         caption = f"研报总结: {', '.join(caption_parts)}"
         try:
