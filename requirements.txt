@@ -3,7 +3,7 @@ httpx
 openai
 pyyaml
 google-genai
-gemini-webapi>=1.17.3
+gemini-webapi>=1.21.0
 pandas
 matplotlib
 dataframe-image
