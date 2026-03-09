@@ -21,6 +21,11 @@ from youtube_summary import (
     youtube_watch_channels,
     write_prompt_file,
 )
+from research_report import (
+    maybe_handle_research_report,
+    persist_research_channel,
+    research_watch_channels,
+)
 import finance_calendar
 
 log_level_name = os.getenv("LOGLEVEL", "INFO").upper()
@@ -278,6 +283,52 @@ async def testcal_command(interaction: discord.Interaction) -> None:
     asyncio.create_task(_run())
 
 
+@discord_bot.tree.command(name="setresearch", description="Toggle research report monitoring (file attachments) in this channel")
+async def setresearch_command(
+    interaction: discord.Interaction,
+    enabled: bool,
+    prompt: Optional[str] = None,
+    use_default_prompt: bool = False,
+) -> None:
+    channel = interaction.channel
+    if channel is None:
+        await interaction.response.send_message("Can't find the channel for this command.", ephemeral=True)
+        return
+
+    is_admin, cfg = await require_admin(interaction)
+    if not is_admin:
+        return
+    research_config = cfg.get("research_report", {})
+
+    if not research_config.get("enabled", True):
+        await interaction.response.send_message(
+            "Research report monitoring is disabled in config.yaml (research_report.enabled).", ephemeral=True
+        )
+        return
+
+    channel_id = channel.id
+
+    if not enabled:
+        research_watch_channels.pop(channel_id, None)
+        await asyncio.to_thread(persist_research_channel, channel_id, False)
+        await interaction.response.send_message("Stopped monitoring research files in this channel.", ephemeral=True)
+        return
+
+    prompt_override = None
+    if use_default_prompt:
+        prompt_override = None
+    elif prompt:
+        prompt_override = prompt.strip()
+
+    research_watch_channels[channel_id] = prompt_override
+    await asyncio.to_thread(persist_research_channel, channel_id, True)
+
+    prompt_info = "the default prompt file" if prompt_override is None else "this channel override"
+    await interaction.response.send_message(
+        f"Research report monitoring enabled for this channel using {prompt_info}.", ephemeral=True
+    )
+
+
 # 使用 discord.ext.tasks 实现定时任务
 # time=datetime.time(hour=0) 表示UTC时间的0点(即北京时间8点)，
 # 或者我们在函数内判断时间简化时区问题，这里采用每小时检查一次 + 内部判断日期的策略，
@@ -358,6 +409,7 @@ async def on_message(new_msg: discord.Message) -> None:
     )
 
     await maybe_handle_youtube_summary(new_msg, config, not is_bad_user, not is_bad_channel, is_dm)
+    await maybe_handle_research_report(new_msg, config, not is_bad_user, not is_bad_channel, is_dm)
 
     if (not is_dm and discord_bot.user not in new_msg.mentions) or is_bad_user or is_bad_channel:
         return

@@ -1,8 +1,8 @@
 # Discord settings:
 
-bot_token: 
-client_id: 
-status_message: 
+bot_token:
+client_id:
+status_message:
 
 max_text: 100000
 max_images: 5
@@ -12,7 +12,7 @@ use_plain_responses: false
 allow_dms: true
 
 permissions:
-  bot_whitelist: []  # optional: allow specific bot user IDs to be processed
+  bot_whitelist: [] # optional: allow specific bot user IDs to be processed
   users:
     admin_ids: []
     allowed_ids: []
@@ -26,40 +26,39 @@ permissions:
     allowed_ids: []
     blocked_ids: []
 
-
 # LLM settings:
 
 providers:
   # Remote providers:
   azure-openai:
     base_url: https://<resource name>.openai.azure.com/openai/deployments/<deployment name>
-    api_key: 
+    api_key:
     extra_query:
       api-version: 2024-12-01-preview
 
   google:
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
-    api_key: 
+    api_key:
 
   groq:
     base_url: https://api.groq.com/openai/v1
-    api_key: 
+    api_key:
 
   mistral:
     base_url: https://api.mistral.ai/v1
-    api_key: 
+    api_key:
 
   openai:
     base_url: https://api.openai.com/v1
-    api_key: 
+    api_key:
 
   openrouter:
     base_url: https://openrouter.ai/api/v1
-    api_key: 
+    api_key:
 
   x-ai:
     base_url: https://api.x.ai/v1
-    api_key: 
+    api_key:
 
   # Local providers:
   lmstudio:
@@ -88,8 +87,8 @@ system_prompt: |
 
 # Gemini settings (Shared by youtube_summary & finance_calendar):
 gemini:
-  secure_1psid: ""      # __Secure-1PSID cookie for gemini_webapi
-  secure_1psidts: ""    # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
+  secure_1psid: "" # __Secure-1PSID cookie for gemini_webapi
+  secure_1psidts: "" # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
 
 youtube_summary:
   enabled: true
@@ -97,8 +96,15 @@ youtube_summary:
   prompt_file: config/youtube-summary-prompt.txt
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
   post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
-  watch_channels: []  # Optional: pre-enable specific channel IDs to survive restarts
+  watch_channels: [] # Optional: pre-enable specific channel IDs to survive restarts
+
+research_report:
+  enabled: true
+  model: unspecified # Gemini model for summarisation (must support file uploads)
+  api_key: "" # Optional: dedicated Gemini API key; falls back to gemini.api_key or providers.google.api_key
+  prompt_file: config/research-prompt.txt
+  watch_channels: [] # Optional: pre-enable specific channel IDs to survive restarts
 
 finance_calendar:
   enabled: true
-  channels: []  # List of channel IDs to auto-send the compiled calendar summary
+  channels: [] # List of channel IDs to auto-send the compiled calendar summary
