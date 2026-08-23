@@ -14,7 +14,6 @@ if not hasattr(enum, "StrEnum"):
     enum.StrEnum = StrEnum  # type: ignore[attr-defined]
 
 from gemini_webapi import GeminiClient, GeminiError  # type: ignore
-from gemini_webapi.constants import Model
 import yaml
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 
@@ -98,13 +97,12 @@ def format_youtube_prompt(template: str, url: str, author_name: str, channel_nam
     return prompt
 
 
-def resolve_gemini_model(youtube_config: dict[str, Any]) -> Model:
-    name = youtube_config.get("model") or DEFAULT_YOUTUBE_MODEL
-    try:
-        return Model.from_name(name)
-    except Exception:
-        logging.warning("Invalid Gemini model '%s', falling back to %s", name, DEFAULT_YOUTUBE_MODEL)
-        return Model.from_name(DEFAULT_YOUTUBE_MODEL)
+def resolve_gemini_model(youtube_config: dict[str, Any]) -> Optional[str]:
+    """Resolve Gemini model for YouTube summary. Returns None for default/unspecified model."""
+    name = str(youtube_config.get("model") or DEFAULT_YOUTUBE_MODEL).strip()
+    if not name or name.lower() in ("unspecified", "default", "none"):
+        return None
+    return name
 
 
 def get_gemini_cookies(config: dict[str, Any], youtube_config: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -265,6 +263,7 @@ async def summarize_youtube_video(
         return None
 
     model = resolve_gemini_model(youtube_config)
+    logging.info("Sending YouTube summary request to Gemini WebAPI (model=%s, url=%s)", model or "default", url)
     client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
 
     try:

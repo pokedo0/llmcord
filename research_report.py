@@ -9,7 +9,6 @@ import discord
 import yaml
 
 from gemini_webapi import GeminiClient, GeminiError
-from gemini_webapi.constants import Model
 
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 from youtube_summary import (
@@ -61,14 +60,12 @@ def load_research_prompt(research_config: dict[str, Any]) -> str:
     return load_prompt_file(prompt_path, DEFAULT_RESEARCH_PROMPT)
 
 
-def resolve_research_model(research_config: dict[str, Any]) -> Model:
-    """Resolve the Gemini model for research reports. Falls back to unspecified."""
-    name = research_config.get("model") or "unspecified"
-    try:
-        return Model.from_name(name)
-    except Exception:
-        logging.warning("Invalid research Gemini model '%s', falling back to unspecified", name)
-        return Model.from_name("unspecified")
+def resolve_research_model(research_config: dict[str, Any]) -> Optional[str]:
+    """Resolve the Gemini model for research reports. Returns None for default/unspecified model."""
+    name = str(research_config.get("model") or "unspecified").strip()
+    if not name or name.lower() in ("unspecified", "default", "none"):
+        return None
+    return name
 
 
 def persist_research_channel(channel_id: int, enabled: bool) -> None:
@@ -139,7 +136,7 @@ async def _summarize_with_gemini(
 
         logging.info(
             "Sending research prompt to Gemini (model=%s) with %d file(s): %s",
-            model, len(attachment_paths), attachment_paths,
+            model or "default", len(attachment_paths), attachment_paths,
         )
 
         # gemini_webapi generate_content supports `files: list[str | Path]`

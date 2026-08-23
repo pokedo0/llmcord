@@ -20,7 +20,6 @@ SECURE_1PSID_DEFAULT = "g.a0004AgGYoeiTV0zOWYDC2g9a9-Ro9xiM54pBwLUb8ngW5Nt6G1qO3
 SECURE_1PSIDTS_DEFAULT = "sidts-CjcBwQ9iI5peWWY8ayBRRuELq7S3o1_2ue3xfLl7pntk7a9rYQF2cXUtYnhIpZpu4Kio8O9oXNqEEAA"
 
 from gemini_webapi import GeminiClient, GeminiError  # type: ignore  # imported after StrEnum shim
-from gemini_webapi.constants import Model
 
 from youtube_summary import (
     DEFAULT_YOUTUBE_PROMPT,
@@ -41,11 +40,13 @@ def load_prompt_text(prompt_arg: Optional[str]) -> str:
     return load_prompt_file(prompt_file, DEFAULT_YOUTUBE_PROMPT)
 
 
-def resolve_model(model_arg: Optional[str]) -> Model:
+def resolve_model(model_arg: Optional[str]) -> Optional[str]:
     cfg = read_config()
     yt_cfg = cfg.get("youtube_summary", {}) or {}
-    name = model_arg or yt_cfg.get("model") or Model.G_2_5_FLASH.model_name
-    return Model.from_name(name)
+    name = str(model_arg or yt_cfg.get("model") or "unspecified").strip()
+    if not name or name.lower() in ("unspecified", "default", "none"):
+        return None
+    return name
 
 
 def resolve_cookies(args: argparse.Namespace) -> tuple[str, Optional[str]]:

@@ -9,7 +9,6 @@ from typing import Any, Optional
 import discord
 import yaml
 from gemini_webapi import GeminiClient, GeminiError
-from gemini_webapi.constants import Model
 
 # 复用 table_summary_img 的常量和函数
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
