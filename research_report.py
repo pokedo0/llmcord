@@ -18,6 +18,7 @@ from youtube_summary import (
     load_prompt_file,
     get_gemini_cookies,
     resolve_gemini_model,
+    resolve_gemini_extended_thinking,
 )
 
 # ────────────────────────────
@@ -60,12 +61,10 @@ def load_research_prompt(research_config: dict[str, Any]) -> str:
     return load_prompt_file(prompt_path, DEFAULT_RESEARCH_PROMPT)
 
 
-def resolve_research_model(research_config: dict[str, Any]) -> Optional[str]:
-    """Resolve the Gemini model for research reports. Returns None for default/unspecified model."""
-    name = str(research_config.get("model") or "unspecified").strip()
-    if not name or name.lower() in ("unspecified", "default", "none"):
-        return None
-    return name
+def resolve_research_model(research_config: dict[str, Any], config: Optional[dict[str, Any]] = None) -> Optional[str]:
+    """Resolve the Gemini model for research reports. Delegates to unified resolve_gemini_model."""
+    cfg = config or read_config()
+    return resolve_gemini_model(cfg, research_config)
 
 
 def persist_research_channel(channel_id: int, enabled: bool) -> None:
@@ -126,8 +125,9 @@ async def _summarize_with_gemini(
         logging.warning("Missing __Secure-1PSID cookie for research report Gemini webapi.")
         return None
 
-    model = resolve_research_model(research_config)
-    proxy = research_config.get("proxy")
+    model = resolve_gemini_model(config, research_config)
+    extended_thinking = resolve_gemini_extended_thinking(config, research_config)
+    proxy = research_config.get("proxy") or config.get("gemini", {}).get("proxy")
 
     client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
 
@@ -135,8 +135,8 @@ async def _summarize_with_gemini(
         await client.init(auto_refresh=True)
 
         logging.info(
-            "Sending research prompt to Gemini (model=%s) with %d file(s): %s",
-            model or "default", len(attachment_paths), attachment_paths,
+            "Sending research prompt to Gemini (model=%s, extended_thinking=%s) with %d file(s): %s",
+            model or "default", extended_thinking, len(attachment_paths), attachment_paths,
         )
 
         # gemini_webapi generate_content supports `files: list[str | Path]`
@@ -144,6 +144,7 @@ async def _summarize_with_gemini(
             prompt=prompt_text,
             files=attachment_paths,
             model=model,
+            extended_thinking=extended_thinking,
         )
 
         return resp.text.strip() if getattr(resp, "text", None) else None

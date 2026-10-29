@@ -13,7 +13,12 @@ from gemini_webapi import GeminiClient, GeminiError
 # 复用 table_summary_img 的常量和函数
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 # 复用 youtube_summary 的部分逻辑（如切分文本），如果无法直接导入则复制一份简化版
-from youtube_summary import split_text_for_embeds, _split_summary_and_table
+from youtube_summary import (
+    split_text_for_embeds,
+    _split_summary_and_table,
+    resolve_gemini_model,
+    resolve_gemini_extended_thinking,
+)
 
 # 常量定义
 PROMPT_FILE = "config/calendar-prompt.txt"
@@ -93,12 +98,26 @@ async def generate_calendar_summary() -> Optional[str]:
     now_str = datetime.now().strftime("%Y-%m-%d")
     prompt_text = f"Current Date: {now_str}\n\n{prompt_text}"
 
-    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts)
+    cfg = read_config()
+    cal_cfg = get_calendar_config()
+    model = resolve_gemini_model(cfg, cal_cfg)
+    extended_thinking = resolve_gemini_extended_thinking(cfg, cal_cfg)
+    proxy = cal_cfg.get("proxy") or cfg.get("gemini", {}).get("proxy")
+
+    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
     
     try:
         await client.init(auto_refresh=True)
-        # 使用默认模型或配置模型，这里暂定不指定，让库使用默认
-        resp = await client.generate_content(prompt=prompt_text)
+        logging.info(
+            "Sending calendar prompt to Gemini WebAPI (model=%s, extended_thinking=%s)",
+            model or "default",
+            extended_thinking,
+        )
+        resp = await client.generate_content(
+            prompt=prompt_text,
+            model=model,
+            extended_thinking=extended_thinking,
+        )
         return resp.text
     except Exception:
         logging.exception("Error generating calendar content with Gemini")

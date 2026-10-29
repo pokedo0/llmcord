@@ -1,4 +1,4 @@
-﻿# llmcord (Fork 版)
+# llmcord (Fork 版)
 
 这是一个基于原版 `llmcord` 的定制 Fork，核心目标不是通用聊天，而是围绕 **YouTube 视频总结**、**财经日历推送**、**财报研读** 三个场景做自动化。
 
@@ -89,13 +89,15 @@ docker compose up -d
 
 以下命令默认仅管理员可用（受 `permissions.users.admin_ids` 控制）：
 
+- `/geminimodels [set_model:...] [extended_thinking:true|false]`：查询或设置 Gemini 统一模型与扩展思考模式（保存至 `config.yaml` 的 `gemini` 节，YouTube 总结、研报研读、财经日历统一生效）。
 - `/ytwatch enabled:true|false`：开启/关闭当前频道的 YouTube 自动总结。
 - `/ytprompt prompt:...`：更新 YouTube 总结 prompt 文件内容。
 - `/ysession ...`：更新 Gemini cookie（写入 `config.yaml`）。
 - `/calendar enabled:true|false`：订阅/取消财经日历定时推送。
 - `/testcal`：立即测试一次财经日历推送。
 - `/setresearch enabled:true|false`：开启/关闭当前频道财报研读监听。
-- `/model model:...`：切换聊天模型。
+- `/model model:...`：切换通用聊天模型。
+- `/test`：测试生成并发送 Markdown 表格渲染图片。
 
 ## Prompt 说明
 
@@ -152,6 +154,13 @@ docker compose up -d
 
 ## 配置建议
 
+- `gemini.model`（统一模型）：
+  - 填 `unspecified` 或 `default` 时，Google 服务端将按账号当前 Web 默认配置自动分配（可通过 `/geminimodels` 实时查看映射的模型）。
+  - 若需固定模型，可在 Discord 中运行 `/geminimodels` 查阅当前账号所有可用标识（如 `gemini-flash`、`gemini-pro` 等）并直接在线设置或填入配置。
+  - 所有 Gemini 业务（YouTube 视频总结、财报研读、财经日历）均统一使用该指定模型。
+- `gemini.extended_thinking`（统一思考程度）：
+  - `false`：标准思考（默认）；`true`：开启扩展深度思考模式（Gemini Extended Thinking）。
+  - 亦可直接通过指令 `/geminimodels extended_thinking:true` 进行在线切换与配置保存。
 - `youtube_summary.post_delay_seconds`：建议 `30~120`，新视频更稳。
 - `youtube_summary.retry_delay_seconds`：建议 `600`（10 分钟）起步。
 - `youtube_summary.watch_channels` / `research_report.watch_channels` / `finance_calendar.channels`：可预置频道，重启后自动恢复监听。
@@ -159,3 +168,4 @@ docker compose up -d
 ## 免责声明
 
 本项目是个人 Fork 的业务化改造版本，与原项目功能侧重点不同。请根据你的使用场景自行评估合规、稳定性与风险。
+

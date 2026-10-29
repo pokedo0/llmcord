@@ -85,14 +85,15 @@ system_prompt: |
 
   Today's date is {date}. The current time is {time}.
 
-# Gemini settings (Shared by youtube_summary & finance_calendar):
+# Gemini settings (Unified model & thinking for youtube_summary, research_report, finance_calendar):
 gemini:
   secure_1psid: "" # __Secure-1PSID cookie for gemini_webapi
   secure_1psidts: "" # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
+  model: unspecified # Unified Gemini model (e.g. unspecified/default, gemini-flash, gemini-pro, gemini-argon)
+  extended_thinking: false # Enable unified extended thinking mode (true/false)
 
 youtube_summary:
   enabled: true
-  model: unspecified
   prompt_file: config/youtube-summary-prompt.txt
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
   post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
@@ -100,10 +101,10 @@ youtube_summary:
 
 research_report:
   enabled: true
-  model: unspecified # Gemini model for summarisation (uses gemini_webapi with cookies)
   prompt_file: config/research-prompt.txt
   watch_channels: [] # Optional: pre-enable specific channel IDs to survive restarts
 
 finance_calendar:
   enabled: true
   channels: [] # List of channel IDs to auto-send the compiled calendar summary
+

@@ -27,6 +27,8 @@ from youtube_summary import (
     format_youtube_prompt,
     load_prompt_file,
     read_config,
+    resolve_gemini_model,
+    resolve_gemini_extended_thinking,
 )
 
 
@@ -41,12 +43,13 @@ def load_prompt_text(prompt_arg: Optional[str]) -> str:
 
 
 def resolve_model(model_arg: Optional[str]) -> Optional[str]:
+    if model_arg:
+        name = str(model_arg).strip()
+        if not name or name.lower() in ("unspecified", "default", "none"):
+            return None
+        return name
     cfg = read_config()
-    yt_cfg = cfg.get("youtube_summary", {}) or {}
-    name = str(model_arg or yt_cfg.get("model") or "unspecified").strip()
-    if not name or name.lower() in ("unspecified", "default", "none"):
-        return None
-    return name
+    return resolve_gemini_model(cfg)
 
 
 def resolve_cookies(args: argparse.Namespace) -> tuple[str, Optional[str]]:
@@ -69,11 +72,22 @@ def resolve_cookies(args: argparse.Namespace) -> tuple[str, Optional[str]]:
     return secure_1psid, secure_1psidts
 
 
-async def summarize(url: str, prompt: str, model: Model, cookies: tuple[str, Optional[str]], proxy: Optional[str]) -> str:
+async def summarize(
+    url: str,
+    prompt: str,
+    model: Optional[str],
+    cookies: tuple[str, Optional[str]],
+    proxy: Optional[str],
+    extended_thinking: bool = False,
+) -> str:
     client = GeminiClient(secure_1psid=cookies[0], secure_1psidts=cookies[1], proxy=proxy)
     await client.init()
     try:
-        output = await client.generate_content(prompt=prompt, model=model)
+        output = await client.generate_content(
+            prompt=prompt,
+            model=model,
+            extended_thinking=extended_thinking,
+        )
         return output.text
     finally:
         await client.close()
@@ -85,7 +99,8 @@ def main() -> None:
     )
     parser.add_argument("--url", required=True, help="YouTube video URL")
     parser.add_argument("--prompt", help="Override prompt text")
-    parser.add_argument("--model", help="Gemini model name (default: youtube_summary.model or gemini-2.5-flash)")
+    parser.add_argument("--model", help="Gemini model name (default: youtube_summary.model)")
+    parser.add_argument("--extended-thinking", action="store_true", help="Enable extended thinking mode")
     parser.add_argument("--secure-1psid", dest="secure_1psid", help="__Secure-1PSID cookie value")
     parser.add_argument("--secure-1psidts", dest="secure_1psidts", help="__Secure-1PSIDTS cookie value (optional)")
     parser.add_argument("--channel", default="local-channel", help="Channel name placeholder for the prompt")
@@ -100,8 +115,11 @@ def main() -> None:
     model = resolve_model(args.model)
     cookies = resolve_cookies(args)
 
+    cfg = read_config()
+    extended_thinking = args.extended_thinking or resolve_gemini_extended_thinking(cfg)
+
     try:
-        summary = asyncio.run(summarize(args.url, prompt, model, cookies, args.proxy))
+        summary = asyncio.run(summarize(args.url, prompt, model, cookies, args.proxy, extended_thinking))
     except GeminiError as exc:  # pragma: no cover - manual runner
         raise SystemExit(f"Gemini request failed: {exc}") from exc
 

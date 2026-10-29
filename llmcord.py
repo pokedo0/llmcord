@@ -20,7 +20,10 @@ from youtube_summary import (
     persist_watch_channel,
     youtube_watch_channels,
     write_prompt_file,
+    get_gemini_cookies,
+    persist_gemini_model,
 )
+from gemini_webapi import GeminiClient
 from research_report import (
     maybe_handle_research_report,
     persist_research_channel,
@@ -215,6 +218,135 @@ async def ysession_command(
         await interaction.response.send_message("Updated YouTube Gemini session cookies.", ephemeral=True)
     else:
         await interaction.response.send_message("Failed to update the Gemini session cookies. Check logs for details.", ephemeral=True)
+
+
+@discord_bot.tree.command(name="geminimodels", description="List or set unified Gemini model & extended thinking mode")
+async def geminimodels_command(
+    interaction: discord.Interaction,
+    set_model: Optional[str] = None,
+    extended_thinking: Optional[bool] = None,
+) -> None:
+    global config
+
+    is_admin, cfg = await require_admin(interaction)
+    if not is_admin:
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    logging.info(
+        "User %s requested /geminimodels (set_model=%s, extended_thinking=%s)",
+        interaction.user.id,
+        set_model,
+        extended_thinking,
+    )
+
+    cookies = get_gemini_cookies(cfg, cfg.get("youtube_summary", {}))
+    secure_1psid, secure_1psidts = cookies
+    if not secure_1psid:
+        logging.warning("/geminimodels: Missing __Secure-1PSID cookie in config.")
+        await interaction.followup.send(
+            "❌ **未找到 Gemini Cookie**\n请先在 `config/config.yaml` 中设置 `gemini.secure_1psid`，或使用 `/ysession` 指令填入 Cookie。",
+            ephemeral=True,
+        )
+        return
+
+    proxy = (
+        cfg.get("gemini", {}).get("proxy")
+        or cfg.get("youtube_summary", {}).get("proxy")
+        or cfg.get("research_report", {}).get("proxy")
+    )
+
+    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
+    try:
+        logging.info("Initializing GeminiClient to fetch available models...")
+        await client.init(timeout=30)
+        account_status = client.account_status
+        models = client.list_models() or []
+        logging.info(
+            "GeminiClient initialized successfully. Status: %s, Discovered %d models: %s",
+            account_status.name,
+            len(models),
+            [m.model_name for m in models],
+        )
+    except Exception as err:
+        logging.exception("Failed to initialize GeminiClient for /geminimodels: %s", err)
+        await interaction.followup.send(
+            f"❌ **连接 Gemini WebAPI 失败**：`{err}`\n请检查网络、代理或 Cookie 是否有效。",
+            ephemeral=True,
+        )
+        return
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+    cur_model = cfg.get("gemini", {}).get("model", "unspecified")
+    cur_think = bool(cfg.get("gemini", {}).get("extended_thinking", False))
+
+    update_msg = ""
+    if set_model is not None or extended_thinking is not None:
+        target_model = set_model.strip() if set_model is not None else None
+        success = await asyncio.to_thread(persist_gemini_model, target_model, extended_thinking)
+        if success:
+            config = await asyncio.to_thread(get_config)
+            logging.info(
+                "Successfully updated config.yaml gemini settings: model=%s, extended_thinking=%s",
+                target_model,
+                extended_thinking,
+            )
+            changes = []
+            if target_model is not None:
+                cur_model = target_model
+                changes.append(f"模型设置为 `{target_model}`")
+            if extended_thinking is not None:
+                cur_think = extended_thinking
+                changes.append(f"扩展思考设置为 `{extended_thinking}`")
+            update_msg = f"✅ **统一配置已更新**：{'，'.join(changes)}\n*(将统一应用于 YouTube 视频总结、研报分析、财经日历)*\n\n"
+        else:
+            logging.error("Failed to persist unified gemini settings")
+            update_msg = "⚠️ **写入配置失败**：未能更新 `config.yaml`，请检查服务器日志。\n\n"
+
+    status_desc = f"`{account_status.name}`"
+    if account_status.name == "AVAILABLE":
+        status_desc += " (账号正常)"
+    elif account_status.name == "UNAUTHENTICATED":
+        status_desc += " (未登录/Cookie 已失效，目前为访客模式)"
+    else:
+        status_desc += f" ({account_status.description})"
+
+    models_text = []
+    default_name = models[0].model_name if models else "未知"
+    default_display = models[0].display_name if models else ""
+    models_text.append(f"• `unspecified` 或 `default` ── **[推荐/默认]** 随 Google 自动分配 (当前映射: `{default_name}` {default_display})")
+
+    for idx, m in enumerate(models):
+        is_def = " ★ [默认]" if idx == 0 else ""
+        avail = "可用" if m.is_available else "受限/不可用"
+        models_text.append(f"• `{m.model_name}` ── {m.display_name} ({avail}){is_def}")
+
+    sample_models = ", ".join(m.model_name for m in models[:3]) if models else "gemini-flash"
+
+    lines = [
+        f"{update_msg}### 🤖 Gemini 统一模型与思考配置",
+        f"**账号状态**：{status_desc}",
+        f"**当前统一配置**：",
+        f"• `model`: `{cur_model}`",
+        f"• `extended_thinking`: `{cur_think}`",
+        f"*(YouTube 总结、研报研读、财经日历均统一走此配置)*",
+        "",
+        "**可选模型名（可填写在配置中）**：",
+        *models_text,
+        "",
+        "**配置示例 (`config/config.yaml`)**：",
+        "```yaml",
+        "gemini:",
+        f"  model: {cur_model}  # 可选: unspecified, {sample_models}",
+        f"  extended_thinking: {str(cur_think).lower()}  # 统一扩展思考 (true/false)",
+        "```",
+    ]
+
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 
 @discord_bot.tree.command(name="test", description="Return a markdown table sample for display testing")

@@ -9,7 +9,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 from gemini_webapi import GeminiClient
-from youtube_summary import get_gemini_cookies
+from youtube_summary import get_gemini_cookies, resolve_gemini_extended_thinking
 from research_report import resolve_research_model, load_research_prompt
 
 def read_config(filepath: str = "config/config.yaml") -> dict:
@@ -39,8 +39,9 @@ async def main():
         sys.exit(1)
 
     # 模型获取
-    model = resolve_research_model(research_cfg)
-    proxy = research_cfg.get("proxy")
+    model = resolve_research_model(research_cfg, config)
+    proxy = research_cfg.get("proxy") or config.get("gemini", {}).get("proxy")
+    extended_thinking = resolve_gemini_extended_thinking(config, research_cfg)
     
     # 获取 Prompt
     prompt = load_research_prompt(research_cfg)
@@ -54,6 +55,7 @@ async def main():
     print("=========================================")
     print(f"测试文件: {test_file_path}")
     print(f"使用模型: {model}")
+    print(f"扩展思考: {extended_thinking}")
     print("=========================================\n")
     print("正在初始化 Gemini WebAPI 客户端并发送请求...")
 
@@ -66,6 +68,7 @@ async def main():
             prompt=prompt,
             files=[test_file_path],
             model=model,
+            extended_thinking=extended_thinking,
         )
         
         text = resp.text.strip() if getattr(resp, "text", None) else None

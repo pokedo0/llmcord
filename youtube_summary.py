@@ -97,12 +97,26 @@ def format_youtube_prompt(template: str, url: str, author_name: str, channel_nam
     return prompt
 
 
-def resolve_gemini_model(youtube_config: dict[str, Any]) -> Optional[str]:
-    """Resolve Gemini model for YouTube summary. Returns None for default/unspecified model."""
-    name = str(youtube_config.get("model") or DEFAULT_YOUTUBE_MODEL).strip()
+def resolve_gemini_model(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> Optional[str]:
+    """Resolve unified Gemini model from gemini.model (or module fallback). Returns None for default/unspecified model."""
+    gemini_cfg = config.get("gemini", {})
+    name = gemini_cfg.get("model")
+    if not name and module_config:
+        name = module_config.get("model")
+    name = str(name or DEFAULT_YOUTUBE_MODEL).strip()
     if not name or name.lower() in ("unspecified", "default", "none"):
         return None
     return name
+
+
+def resolve_gemini_extended_thinking(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> bool:
+    """Resolve unified extended thinking mode from gemini.extended_thinking (or module fallback)."""
+    gemini_cfg = config.get("gemini", {})
+    if "extended_thinking" in gemini_cfg:
+        return bool(gemini_cfg["extended_thinking"])
+    if module_config and "extended_thinking" in module_config:
+        return bool(module_config["extended_thinking"])
+    return False
 
 
 def get_gemini_cookies(config: dict[str, Any], youtube_config: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -160,6 +174,37 @@ def persist_youtube_cookies(
     except Exception:
         logging.exception("Failed to update gemini cookies")
         return False
+
+
+def persist_gemini_model(
+    model_name: Optional[str] = None,
+    extended_thinking: Optional[bool] = None,
+) -> bool:
+    """Persist unified model and/or extended_thinking under gemini section in config.yaml."""
+    try:
+        cfg = read_config()
+        gemini_cfg = cfg.setdefault("gemini", {}) or {}
+
+        if model_name is not None:
+            gemini_cfg["model"] = model_name.strip()
+        if extended_thinking is not None:
+            gemini_cfg["extended_thinking"] = extended_thinking
+
+        cfg["gemini"] = gemini_cfg
+
+        with open("config/config.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+
+        logging.info(
+            "Updated unified gemini settings in config.yaml: model=%s, extended_thinking=%s",
+            model_name,
+            extended_thinking,
+        )
+        return True
+    except Exception:
+        logging.exception("Failed to update gemini settings in config.yaml")
+        return False
+
 
 
 def split_text_for_embeds(
@@ -256,19 +301,31 @@ async def summarize_youtube_video(
     youtube_config: dict[str, Any],
     cookies: tuple[Optional[str], Optional[str]],
     proxy: Optional[str] = None,
+    config: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     secure_1psid, secure_1psidts = cookies
     if not secure_1psid:
         logging.warning("Missing __Secure-1PSID cookie for Gemini webapi.")
         return None
 
-    model = resolve_gemini_model(youtube_config)
-    logging.info("Sending YouTube summary request to Gemini WebAPI (model=%s, url=%s)", model or "default", url)
+    cfg = config or read_config()
+    model = resolve_gemini_model(cfg, youtube_config)
+    extended_thinking = resolve_gemini_extended_thinking(cfg, youtube_config)
+    logging.info(
+        "Sending YouTube summary request to Gemini WebAPI (model=%s, extended_thinking=%s, url=%s)",
+        model or "default",
+        extended_thinking,
+        url,
+    )
     client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
 
     try:
         await client.init(auto_refresh=True)
-        resp = await client.generate_content(prompt=prompt_text, model=model)
+        resp = await client.generate_content(
+            prompt=prompt_text,
+            model=model,
+            extended_thinking=extended_thinking,
+        )
     except GeminiError:
         logging.exception("Gemini webapi request failed")
         return None
@@ -282,6 +339,7 @@ async def summarize_youtube_video(
             logging.exception("Failed to close Gemini client cleanly")
 
     return _extract_summary(resp)
+
 
 
 def persist_watch_channel(channel_id: int, enabled: bool) -> None:
@@ -362,7 +420,7 @@ async def maybe_handle_youtube_summary(
             await asyncio.sleep(post_delay)
 
         summary = await summarize_youtube_video(
-            url, prompt_text, youtube_config, cookies, proxy=youtube_config.get("proxy")
+            url, prompt_text, youtube_config, cookies, proxy=youtube_config.get("proxy"), config=config
         )
 
     if not summary:
