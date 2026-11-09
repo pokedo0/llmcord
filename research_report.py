@@ -8,7 +8,8 @@ from typing import Any, Optional
 import discord
 import yaml
 
-from gemini_webapi import GeminiClient, GeminiError
+import base64
+import mimetypes
 
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 from youtube_summary import (
@@ -19,6 +20,7 @@ from youtube_summary import (
     get_gemini_cookies,
     resolve_gemini_model,
     resolve_gemini_extended_thinking,
+    get_gemini_client,
 )
 
 # ────────────────────────────
@@ -108,58 +110,87 @@ def _get_supported_attachments(msg: discord.Message) -> list[discord.Attachment]
 #  Gemini interaction (gemini_webapi with cookies + file upload)
 # ────────────────────────────
 
+def _build_content_parts(prompt_text: str, attachment_paths: list[str]) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = []
+    text_accum = prompt_text + "\n"
+
+    for path in attachment_paths:
+        mime_type, _ = mimetypes.guess_type(path)
+        mime_type = mime_type or "application/octet-stream"
+        fname = os.path.basename(path)
+
+        if mime_type.startswith("image/"):
+            try:
+                with open(path, "rb") as img_f:
+                    b64 = base64.b64encode(img_f.read()).decode("utf-8")
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{b64}"}
+                })
+                logging.info("Attached image file %s as base64 image_url", fname)
+            except Exception as e:
+                logging.warning("Failed to encode image %s: %s", fname, e)
+        elif mime_type == "application/pdf" or path.lower().endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(path)
+                pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                text_accum += f"\n--- 附件 PDF 内容: {fname} ---\n{pdf_text}\n"
+                logging.info("Extracted %d characters from PDF: %s", len(pdf_text), fname)
+            except Exception as e:
+                logging.warning("Failed to extract text from PDF %s: %s", fname, e)
+        else:
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as txt_f:
+                    txt_content = txt_f.read()
+                text_accum += f"\n--- 附件文件内容: {fname} ---\n{txt_content}\n"
+                logging.info("Read %d characters from text file: %s", len(txt_content), fname)
+            except Exception as e:
+                logging.warning("Failed to read text attachment %s: %s", fname, e)
+
+    parts.insert(0, {"type": "text", "text": text_accum})
+    return parts
+
+
 async def _summarize_with_gemini(
     prompt_text: str,
     attachment_paths: list[str],
     config: dict[str, Any],
 ) -> Optional[str]:
-    """Upload files + prompt to Gemini via gemini_webapi and return the response text."""
-
+    """Send files + prompt to Gemini Web2API and return the response text."""
     research_config = config.get("research_report", {})
-
-    # Use shared Gemini cookies (same as youtube_summary)
-    cookies = get_gemini_cookies(config, research_config)
-    secure_1psid, secure_1psidts = cookies
-
-    if not secure_1psid:
-        logging.warning("Missing __Secure-1PSID cookie for research report Gemini webapi.")
-        return None
-
-    model = resolve_gemini_model(config, research_config)
+    raw_model = resolve_gemini_model(config, research_config)
     extended_thinking = resolve_gemini_extended_thinking(config, research_config)
-    proxy = research_config.get("proxy") or config.get("gemini", {}).get("proxy")
+    if raw_model:
+        if extended_thinking and not raw_model.endswith("-thinking"):
+            model = f"{raw_model}-thinking"
+        else:
+            model = raw_model
+    else:
+        # 当配置中 model 为空/未指定时，传 "" 交由 Web2API 管理后台「默认模型」接管
+        model = ""
 
-    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
+    client, base_url = get_gemini_client(config, research_config)
+    logging.info(
+        "Sending research prompt to Gemini Web2API (model=%s, extended_thinking=%s, base_url=%s) with %d file(s): %s",
+        model or "Web2API-Default", extended_thinking, base_url, len(attachment_paths), attachment_paths,
+    )
 
     try:
-        await client.init(auto_refresh=True)
-
-        logging.info(
-            "Sending research prompt to Gemini (model=%s, extended_thinking=%s) with %d file(s): %s",
-            model or "default", extended_thinking, len(attachment_paths), attachment_paths,
-        )
-
-        # gemini_webapi generate_content supports `files: list[str | Path]`
-        resp = await client.generate_content(
-            prompt=prompt_text,
-            files=attachment_paths,
+        content_parts = _build_content_parts(prompt_text, attachment_paths)
+        resp = await client.chat.completions.create(
             model=model,
-            extended_thinking=extended_thinking,
+            messages=[{"role": "user", "content": content_parts}],
         )
-
-        return resp.text.strip() if getattr(resp, "text", None) else None
-
-    except GeminiError:
-        logging.exception("Gemini webapi request failed for research report")
-        return None
+        content = resp.choices[0].message.content
+        if content:
+            logging.info("Successfully generated research report summary (%d chars)", len(content))
+        else:
+            logging.warning("Received empty research report summary from Gemini Web2API")
+        return content.strip() if content else None
     except Exception:
-        logging.exception("Unexpected error calling Gemini webapi for research report")
+        logging.exception("Unexpected error calling Gemini Web2API for research report")
         return None
-    finally:
-        try:
-            await client.close()
-        except Exception:
-            logging.exception("Failed to close Gemini client cleanly")
 
 
 # ────────────────────────────

@@ -1,25 +1,18 @@
 """
-Quick tester that summarizes a YouTube video using the community `gemini_webapi`
-client (Gemini webapp cookies required).
+Quick tester that summarizes a YouTube video using Gemini Web2API (OpenAI-compatible endpoint).
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import enum
 import os
+import sys
 from typing import Optional
 
-# python3.10 lacks enum.StrEnum which gemini_webapi expects
-if not hasattr(enum, "StrEnum"):
-    class StrEnum(str, enum.Enum):
-        pass
-    enum.StrEnum = StrEnum  # type: ignore[attr-defined]
-
-SECURE_1PSID_DEFAULT = "g.a0004AgGYoeiTV0zOWYDC2g9a9-Ro9xiM54pBwLUb8ngW5Nt6G1qO3Tb_mGyFduE4tjrYwVM1QACgYKAU8SARUSFQHGX2Mirck9f1tbmAvq4PWOkGxZIxoVAUF8yKpEuli1L8vD_zKijkweNov30076"
-SECURE_1PSIDTS_DEFAULT = "sidts-CjcBwQ9iI5peWWY8ayBRRuELq7S3o1_2ue3xfLl7pntk7a9rYQF2cXUtYnhIpZpu4Kio8O9oXNqEEAA"
-
-from gemini_webapi import GeminiClient, GeminiError  # type: ignore  # imported after StrEnum shim
+# Ensure project root is in sys.path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from youtube_summary import (
     DEFAULT_YOUTUBE_PROMPT,
@@ -29,6 +22,8 @@ from youtube_summary import (
     read_config,
     resolve_gemini_model,
     resolve_gemini_extended_thinking,
+    get_gemini_client,
+    _extract_summary,
 )
 
 
@@ -48,79 +43,66 @@ def resolve_model(model_arg: Optional[str]) -> Optional[str]:
         if not name or name.lower() in ("unspecified", "default", "none"):
             return None
         return name
+
     cfg = read_config()
     return resolve_gemini_model(cfg)
-
-
-def resolve_cookies(args: argparse.Namespace) -> tuple[str, Optional[str]]:
-    secure_1psid = (
-        args.secure_1psid
-        or os.getenv("__Secure-1PSID")
-        or os.getenv("SECURE_1PSID")
-        or SECURE_1PSID_DEFAULT
-    )
-    secure_1psidts = (
-        args.secure_1psidts
-        or os.getenv("__Secure-1PSIDTS")
-        or os.getenv("SECURE_1PSIDTS")
-        or SECURE_1PSIDTS_DEFAULT
-    )
-
-    if not secure_1psid:
-        raise SystemExit("Missing __Secure-1PSID cookie. Provide --secure-1psid or set env __Secure-1PSID.")
-
-    return secure_1psid, secure_1psidts
 
 
 async def summarize(
     url: str,
     prompt: str,
     model: Optional[str],
-    cookies: tuple[str, Optional[str]],
-    proxy: Optional[str],
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
     extended_thinking: bool = False,
 ) -> str:
-    client = GeminiClient(secure_1psid=cookies[0], secure_1psidts=cookies[1], proxy=proxy)
-    await client.init()
-    try:
-        output = await client.generate_content(
-            prompt=prompt,
-            model=model,
-            extended_thinking=extended_thinking,
-        )
-        return output.text
-    finally:
-        await client.close()
+    cfg = read_config()
+    if base_url:
+        cfg.setdefault("gemini", {})["base_url"] = base_url
+    if api_key:
+        cfg.setdefault("gemini", {})["api_key"] = api_key
+
+    client, resolved_base = get_gemini_client(cfg)
+    target_model = model or "gemini-2.5-flash"
+    if extended_thinking and not target_model.endswith("-thinking"):
+        target_model = f"{target_model}-thinking"
+
+    print(f"[*] Calling Gemini Web2API at {resolved_base} with model={target_model}...")
+    resp = await client.chat.completions.create(
+        model=target_model,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    summary = _extract_summary(resp)
+    if not summary:
+        raise RuntimeError("Empty response received from Web2API")
+    return summary
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Summarize a YouTube video with gemini_webapi (uses youtube_summary prompt from config.yaml by default)."
+        description="Summarize a YouTube video with Gemini Web2API (OpenAI-compatible)."
     )
     parser.add_argument("--url", required=True, help="YouTube video URL")
     parser.add_argument("--prompt", help="Override prompt text")
-    parser.add_argument("--model", help="Gemini model name (default: youtube_summary.model)")
+    parser.add_argument("--model", help="Gemini model name (default: from config.yaml)")
     parser.add_argument("--extended-thinking", action="store_true", help="Enable extended thinking mode")
-    parser.add_argument("--secure-1psid", dest="secure_1psid", help="__Secure-1PSID cookie value")
-    parser.add_argument("--secure-1psidts", dest="secure_1psidts", help="__Secure-1PSIDTS cookie value (optional)")
+    parser.add_argument("--base-url", help="Base URL of Gemini Web2API service (e.g. http://127.0.0.1:8083/v1)")
+    parser.add_argument("--api-key", help="API key for Web2API")
     parser.add_argument("--channel", default="local-channel", help="Channel name placeholder for the prompt")
     parser.add_argument("--author", default="local-user", help="Author name placeholder for the prompt")
-    parser.add_argument("--proxy", help="Optional proxy URL for gemini_webapi client")
     args = parser.parse_args()
 
     prompt_template = load_prompt_text(args.prompt)
     prompt = format_youtube_prompt(prompt_template, args.url, args.author, args.channel)
-    # 强制启用 YouTube 扩展，且在末尾附带 URL。
     prompt = f"@Youtube {prompt} {args.url}"
     model = resolve_model(args.model)
-    cookies = resolve_cookies(args)
 
     cfg = read_config()
     extended_thinking = args.extended_thinking or resolve_gemini_extended_thinking(cfg)
 
     try:
-        summary = asyncio.run(summarize(args.url, prompt, model, cookies, args.proxy, extended_thinking))
-    except GeminiError as exc:  # pragma: no cover - manual runner
+        summary = asyncio.run(summarize(args.url, prompt, model, args.base_url, args.api_key, extended_thinking))
+    except Exception as exc:
         raise SystemExit(f"Gemini request failed: {exc}") from exc
 
     print(summary)

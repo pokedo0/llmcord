@@ -87,10 +87,11 @@ system_prompt: |
 
 # Gemini settings (Unified model & thinking for youtube_summary, research_report, finance_calendar):
 gemini:
-  secure_1psid: "" # __Secure-1PSID cookie for gemini_webapi
-  secure_1psidts: "" # __Secure-1PSIDTS cookie for gemini_webapi (optional but recommended)
-  model: unspecified # Unified Gemini model (e.g. unspecified/default, gemini-flash, gemini-pro, gemini-argon)
-  extended_thinking: false # Enable unified extended thinking mode (true/false)
+  base_url: http://127.0.0.1:8083/v1 # Web2API endpoint (OpenAI-compatible)
+  api_key: "" # Optional API key configured in Web2API
+  timeout: 120 # Request timeout in seconds
+  model: "" # 留空时由 Web 后台「默认模型」接管
+  extended_thinking: false # 思考模式由 Web 后台所选模型本身决定
 
 youtube_summary:
   enabled: true

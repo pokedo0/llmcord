@@ -1,4 +1,5 @@
 import asyncio
+import time
 from base64 import b64encode
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,8 +23,11 @@ from youtube_summary import (
     write_prompt_file,
     get_gemini_cookies,
     persist_gemini_model,
+    get_gemini_client,
+    resolve_gemini_model,
+    resolve_gemini_extended_thinking,
 )
-from gemini_webapi import GeminiClient
+# gemini_webapi replaced with Web2API
 from research_report import (
     maybe_handle_research_report,
     persist_research_channel,
@@ -206,18 +210,10 @@ async def ysession_command(
         await interaction.response.send_message("Provide cookies or set clear_1psid/clear_1psidts to blank them.", ephemeral=True)
         return
 
-    success = await asyncio.to_thread(
-        persist_youtube_cookies,
-        secure_1psid,
-        secure_1psidts,
-        clear_1psid,
-        clear_1psidts,
+    await interaction.response.send_message(
+        "ℹ️ **已迁移至 Web2API 架构**\nCookie 由 VPS 服务端 (`gemini-web2api`) 自动保活管理，无需手动更新。\n如需调整服务地址，请在 `config/config.yaml` 的 `gemini.base_url` 中配置。",
+        ephemeral=True
     )
-    if success:
-        config = await asyncio.to_thread(get_config)
-        await interaction.response.send_message("Updated YouTube Gemini session cookies.", ephemeral=True)
-    else:
-        await interaction.response.send_message("Failed to update the Gemini session cookies. Check logs for details.", ephemeral=True)
 
 
 @discord_bot.tree.command(name="geminimodels", description="List or set unified Gemini model & extended thinking mode")
@@ -240,46 +236,23 @@ async def geminimodels_command(
         extended_thinking,
     )
 
-    cookies = get_gemini_cookies(cfg, cfg.get("youtube_summary", {}))
-    secure_1psid, secure_1psidts = cookies
-    if not secure_1psid:
-        logging.warning("/geminimodels: Missing __Secure-1PSID cookie in config.")
-        await interaction.followup.send(
-            "❌ **未找到 Gemini Cookie**\n请先在 `config/config.yaml` 中设置 `gemini.secure_1psid`，或使用 `/ysession` 指令填入 Cookie。",
-            ephemeral=True,
-        )
-        return
-
-    proxy = (
-        cfg.get("gemini", {}).get("proxy")
-        or cfg.get("youtube_summary", {}).get("proxy")
-        or cfg.get("research_report", {}).get("proxy")
-    )
-
-    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
+    client, base_url = get_gemini_client(cfg)
     try:
-        logging.info("Initializing GeminiClient to fetch available models...")
-        await client.init(timeout=30)
-        account_status = client.account_status
-        models = client.list_models() or []
+        logging.info("Querying Gemini Web2API (%s/models) for available models...", base_url)
+        models_data = await client.models.list()
+        models = [m.id for m in models_data.data]
         logging.info(
-            "GeminiClient initialized successfully. Status: %s, Discovered %d models: %s",
-            account_status.name,
+            "Gemini Web2API connected successfully. Discovered %d models: %s",
             len(models),
-            [m.model_name for m in models],
+            models,
         )
     except Exception as err:
-        logging.exception("Failed to initialize GeminiClient for /geminimodels: %s", err)
+        logging.exception("Failed to connect to Gemini Web2API for /geminimodels: %s", err)
         await interaction.followup.send(
-            f"❌ **连接 Gemini WebAPI 失败**：`{err}`\n请检查网络、代理或 Cookie 是否有效。",
+            f"❌ **连接 Gemini Web2API 失败**：`{err}`\n请检查 VPS 服务 `gemini-web2api` 是否正常运行，以及 `config/config.yaml` 中的 `gemini.base_url` 是否正确。",
             ephemeral=True,
         )
         return
-    finally:
-        try:
-            await client.close()
-        except Exception:
-            pass
 
     cur_model = cfg.get("gemini", {}).get("model", "unspecified")
     cur_think = bool(cfg.get("gemini", {}).get("extended_thinking", False))
@@ -307,25 +280,16 @@ async def geminimodels_command(
             logging.error("Failed to persist unified gemini settings")
             update_msg = "⚠️ **写入配置失败**：未能更新 `config.yaml`，请检查服务器日志。\n\n"
 
-    status_desc = f"`{account_status.name}`"
-    if account_status.name == "AVAILABLE":
-        status_desc += " (账号正常)"
-    elif account_status.name == "UNAUTHENTICATED":
-        status_desc += " (未登录/Cookie 已失效，目前为访客模式)"
-    else:
-        status_desc += f" ({account_status.description})"
-
+    status_desc = "ONLINE (已连接 Web2API 网关)"
     models_text = []
-    default_name = models[0].model_name if models else "未知"
-    default_display = models[0].display_name if models else ""
-    models_text.append(f"• `unspecified` 或 `default` ── **[推荐/默认]** 随 Google 自动分配 (当前映射: `{default_name}` {default_display})")
+    default_name = models[0] if models else "unspecified"
+    models_text.append(f"• `unspecified` 或 `default` ── **[推荐/默认]** 随 Google 自动分配 (当前映射: `{default_name}`)")
 
-    for idx, m in enumerate(models):
+    for idx, m_id in enumerate(models):
         is_def = " ★ [默认]" if idx == 0 else ""
-        avail = "可用" if m.is_available else "受限/不可用"
-        models_text.append(f"• `{m.model_name}` ── {m.display_name} ({avail}){is_def}")
+        models_text.append(f"• `{m_id}`{is_def}")
 
-    sample_models = ", ".join(m.model_name for m in models[:3]) if models else "gemini-flash"
+    sample_models = ", ".join(models[:3]) if models else "gemini-2.5-flash"
 
     lines = [
         f"{update_msg}### 🤖 Gemini 统一模型与思考配置",
@@ -348,6 +312,68 @@ async def geminimodels_command(
 
     await interaction.followup.send("\n".join(lines), ephemeral=True)
 
+
+@discord_bot.tree.command(name="ping", description="Test Gemini AI response / 测试 Gemini API 回复与延迟")
+async def ping_command(interaction: discord.Interaction, prompt: Optional[str] = "Reply with one short word.") -> None:
+    await interaction.response.defer(thinking=True, ephemeral=False)
+
+    test_prompt = (prompt or "Reply with one short word.").strip()
+    cfg = await asyncio.to_thread(get_config)
+    client, base_url = get_gemini_client(cfg)
+    raw_model = resolve_gemini_model(cfg)
+    extended_thinking = resolve_gemini_extended_thinking(cfg)
+    if raw_model:
+        model = f"{raw_model}-thinking" if (extended_thinking and not raw_model.endswith("-thinking")) else raw_model
+    else:
+        model = ""
+
+    ws_latency = round(discord_bot.latency * 1000) if getattr(discord_bot, "latency", None) else None
+    ws_str = f"{ws_latency}ms" if ws_latency is not None and ws_latency >= 0 else "N/A"
+
+    logging.info(
+        "/ping invoked by %s (user_id=%s) in channel %s. Sending test prompt to Gemini Web2API (model=%s, base_url=%s, prompt=%r)",
+        interaction.user,
+        interaction.user.id,
+        getattr(interaction.channel, "id", None),
+        model or "Web2API-Default",
+        base_url,
+        test_prompt,
+    )
+
+    t0 = time.time()
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": test_prompt}],
+        )
+        took_ms = round((time.time() - t0) * 1000)
+        content = (resp.choices[0].message.content or "").strip()
+        actual_model = getattr(resp, "model", None) or model or "Web2API-Default"
+
+        logging.info(
+            "/ping succeeded in %dms (model=%s, resp_len=%d): %r",
+            took_ms,
+            actual_model,
+            len(content),
+            content[:120],
+        )
+
+        lines_out = [
+            f"**Pong!** 🏓 Gemini 响应正常（耗时: `{took_ms}ms` | Gateway: `{ws_str}` | 模型: `{actual_model}`）",
+            f"> **Prompt**: `{test_prompt}`",
+            "",
+            content,
+        ]
+        await interaction.followup.send("\n".join(lines_out), ephemeral=False)
+    except Exception as err:
+        took_ms = round((time.time() - t0) * 1000)
+        logging.exception("/ping test failed after %dms: %s", took_ms, err)
+        err_msg = [
+            f"❌ **Gemini Ping 失败**（耗时: `{took_ms}ms` | Gateway: `{ws_str}`）：",
+            f"```{err}```",
+            "> 请检查 Gemini Web2API 是否正常运行、Cookie 是否有效。",
+        ]
+        await interaction.followup.send("\n".join(err_msg), ephemeral=False)
 
 @discord_bot.tree.command(name="test", description="Return a markdown table sample for display testing")
 async def test_command(interaction: discord.Interaction) -> None:

@@ -4,16 +4,9 @@ import logging
 import os
 import re
 from typing import Any, Optional
-import enum
 import discord
 
-# python 3.10 兼容 gemini_webapi 的 StrEnum 依赖
-if not hasattr(enum, "StrEnum"):
-    class StrEnum(str, enum.Enum):
-        pass
-    enum.StrEnum = StrEnum  # type: ignore[attr-defined]
-
-from gemini_webapi import GeminiClient, GeminiError  # type: ignore
+from openai import AsyncOpenAI
 import yaml
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
 
@@ -119,25 +112,24 @@ def resolve_gemini_extended_thinking(config: dict[str, Any], module_config: Opti
     return False
 
 
-def get_gemini_cookies(config: dict[str, Any], youtube_config: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
-    # 1. Try "gemini" block (new shared location)
+def get_gemini_client(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> tuple[AsyncOpenAI, str]:
+    """Return an AsyncOpenAI client configured for Gemini Web2API and the base_url."""
     gemini_cfg = config.get("gemini", {})
-    secure_1psid = gemini_cfg.get("secure_1psid")
-    secure_1psidts = gemini_cfg.get("secure_1psidts")
+    module_cfg = module_config or {}
+    base_url = os.getenv("GEMINI_BASE_URL") or gemini_cfg.get("base_url") or module_cfg.get("base_url") or "http://127.0.0.1:8083/v1"
+    api_key = os.getenv("GEMINI_API_KEY") or gemini_cfg.get("api_key") or module_cfg.get("api_key") or "none"
+    timeout = float(gemini_cfg.get("timeout") or module_cfg.get("timeout") or 120.0)
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
+    return client, base_url
 
-    # 2. Fallback to "youtube_summary" block (legacy) if not found in shared block
-    if not secure_1psid:
-        secure_1psid = youtube_config.get("secure_1psid")
-    if not secure_1psidts:
-        secure_1psidts = youtube_config.get("secure_1psidts")
-        
-    # 3. Fallback to env vars
-    secure_1psid = secure_1psid or os.getenv("__Secure-1PSID") or os.getenv("SECURE_1PSID")
-    secure_1psidts = secure_1psidts or os.getenv("__Secure-1PSIDTS") or os.getenv("SECURE_1PSIDTS")
 
-    if not secure_1psid:
-        return None, None
-    return secure_1psid, secure_1psidts
+def get_gemini_cookies(config: dict[str, Any], youtube_config: Optional[dict[str, Any]] = None) -> tuple[Optional[str], Optional[str]]:
+    """Legacy helper for backward compatibility: returns (base_url, api_key)."""
+    gemini_cfg = config.get("gemini", {})
+    module_cfg = youtube_config or {}
+    base_url = os.getenv("GEMINI_BASE_URL") or gemini_cfg.get("base_url") or module_cfg.get("base_url") or "http://127.0.0.1:8083/v1"
+    api_key = os.getenv("GEMINI_API_KEY") or gemini_cfg.get("api_key") or module_cfg.get("api_key") or ""
+    return base_url, api_key
 
 
 def persist_youtube_cookies(
@@ -274,6 +266,11 @@ def split_text_for_embeds(
 
 
 def _extract_summary(resp: Any) -> Optional[str]:
+    if isinstance(resp, str):
+        return resp.strip() or None
+    if hasattr(resp, "choices") and resp.choices:
+        msg = resp.choices[0].message
+        return (msg.content or "").strip() or None
     if getattr(resp, "text", None):
         return resp.text.strip() or None
     return None
@@ -299,46 +296,45 @@ async def summarize_youtube_video(
     url: str,
     prompt_text: str,
     youtube_config: dict[str, Any],
-    cookies: tuple[Optional[str], Optional[str]],
+    cookies: Optional[tuple[Optional[str], Optional[str]]] = None,
     proxy: Optional[str] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
-    secure_1psid, secure_1psidts = cookies
-    if not secure_1psid:
-        logging.warning("Missing __Secure-1PSID cookie for Gemini webapi.")
-        return None
-
     cfg = config or read_config()
-    model = resolve_gemini_model(cfg, youtube_config)
+    raw_model = resolve_gemini_model(cfg, youtube_config)
     extended_thinking = resolve_gemini_extended_thinking(cfg, youtube_config)
+    if raw_model:
+        if extended_thinking and not raw_model.endswith("-thinking"):
+            model = f"{raw_model}-thinking"
+        else:
+            model = raw_model
+    else:
+        # 当配置中 model 为空/未指定时，传 "" 交由 Web2API 管理后台「默认模型」接管
+        model = ""
+
+    client, base_url = get_gemini_client(cfg, youtube_config)
     logging.info(
-        "Sending YouTube summary request to Gemini WebAPI (model=%s, extended_thinking=%s, url=%s)",
-        model or "default",
+        "Sending YouTube summary request to Gemini Web2API (model=%s, extended_thinking=%s, base_url=%s, url=%s)",
+        model or "Web2API-Default",
         extended_thinking,
+        base_url,
         url,
     )
-    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
 
     try:
-        await client.init(auto_refresh=True)
-        resp = await client.generate_content(
-            prompt=prompt_text,
+        resp = await client.chat.completions.create(
             model=model,
-            extended_thinking=extended_thinking,
+            messages=[{"role": "user", "content": prompt_text}],
         )
-    except GeminiError:
-        logging.exception("Gemini webapi request failed")
-        return None
+        summary = _extract_summary(resp)
+        if summary:
+            logging.info("Successfully received YouTube summary (%d chars) for %s", len(summary), url)
+        else:
+            logging.warning("Received empty YouTube summary from Gemini Web2API for %s", url)
+        return summary
     except Exception:
-        logging.exception("Unexpected error calling Gemini webapi")
+        logging.exception("Error calling Gemini Web2API for YouTube summary: %s", url)
         return None
-    finally:
-        try:
-            await client.close()
-        except Exception:
-            logging.exception("Failed to close Gemini client cleanly")
-
-    return _extract_summary(resp)
 
 
 
@@ -401,7 +397,7 @@ async def maybe_handle_youtube_summary(
 
     cookies = get_gemini_cookies(config, youtube_config)
     if not cookies[0]:
-        await new_msg.reply("Gemini cookies (__Secure-1PSID/TS) are missing for YouTube summaries.", mention_author=False)
+        await new_msg.reply("Gemini Web2API base_url is missing for YouTube summaries.", mention_author=False)
         return
 
     prompt_template = youtube_watch_channels.get(new_msg.channel.id) or load_youtube_prompt(youtube_config)

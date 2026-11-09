@@ -3,7 +3,7 @@ httpx[socks]
 openai
 pyyaml
 google-genai
-gemini-webapi>=2.1.1
+pypdf
 pandas
 matplotlib
 dataframe-image

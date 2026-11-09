@@ -6,7 +6,6 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      GEMINI_COOKIE_PATH: /tmp/gemini_webapi
       ALL_PROXY: socks5h://127.0.0.1:40000
       all_proxy: socks5h://127.0.0.1:40000
       HTTP_PROXY: socks5h://127.0.0.1:40000
@@ -17,4 +16,35 @@ services:
       no_proxy: localhost,127.0.0.1
     volumes:
       - ./config:/app/config
-      - ./gemini_cookies:/tmp/gemini_webapi
+
+  gemini-web2api:
+    image: ghcr.io/zexadev/gemini-web2api-go:latest
+    pull_policy: always
+    ports:
+      - "8083:8083"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    volumes:
+      - gemini-data:/data
+    environment:
+      - PORT=8083
+      - ADMIN_TOKEN=admin123
+      - HTTP_PROXY=http://host.docker.internal:7897
+      - HTTPS_PROXY=http://host.docker.internal:7897
+      - http_proxy=http://host.docker.internal:7897
+      - https_proxy=http://host.docker.internal:7897
+      - PROXY=http://host.docker.internal:7897
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 86400 --cleanup
+
+volumes:
+  gemini-data:
+    name: llmcord_gemini-data
+    external: true
+

@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import discord
 import yaml
-from gemini_webapi import GeminiClient, GeminiError
+
 
 # 复用 table_summary_img 的常量和函数
 from table_summary_img import DATA_START, DATA_END, extract_table_payload, generate_table_image_file
@@ -18,6 +18,7 @@ from youtube_summary import (
     _split_summary_and_table,
     resolve_gemini_model,
     resolve_gemini_extended_thinking,
+    get_gemini_client,
 )
 
 # 常量定义
@@ -84,49 +85,46 @@ def load_prompt() -> str:
         return "Please summarize the financial calendar for the next two weeks."
 
 async def generate_calendar_summary() -> Optional[str]:
-    """调用 Gemini 生成内容"""
-    cookies = get_gemini_cookies_from_config()
-    secure_1psid, secure_1psidts = cookies
-    
-    if not secure_1psid:
-        logging.warning("Missing Gemini cookies for finance calendar.")
-        return None
-
+    """调用 Gemini Web2API 生成日历内容"""
     prompt_text = load_prompt()
-    
-    # 可以在这里替换一些变量，比如当前时间
     now_str = datetime.now().strftime("%Y-%m-%d")
     prompt_text = f"Current Date: {now_str}\n\n{prompt_text}"
 
     cfg = read_config()
     cal_cfg = get_calendar_config()
-    model = resolve_gemini_model(cfg, cal_cfg)
+    raw_model = resolve_gemini_model(cfg, cal_cfg)
     extended_thinking = resolve_gemini_extended_thinking(cfg, cal_cfg)
-    proxy = cal_cfg.get("proxy") or cfg.get("gemini", {}).get("proxy")
+    if raw_model:
+        if extended_thinking and not raw_model.endswith("-thinking"):
+            model = f"{raw_model}-thinking"
+        else:
+            model = raw_model
+    else:
+        # 当配置中 model 为空/未指定时，传 "" 交由 Web2API 管理后台「默认模型」接管
+        model = ""
 
-    client = GeminiClient(secure_1psid=secure_1psid, secure_1psidts=secure_1psidts, proxy=proxy)
-    
+    client, base_url = get_gemini_client(cfg, cal_cfg)
+    logging.info(
+        "Sending calendar prompt to Gemini Web2API (model=%s, extended_thinking=%s, base_url=%s)",
+        model or "Web2API-Default",
+        extended_thinking,
+        base_url,
+    )
+
     try:
-        await client.init(auto_refresh=True)
-        logging.info(
-            "Sending calendar prompt to Gemini WebAPI (model=%s, extended_thinking=%s)",
-            model or "default",
-            extended_thinking,
-        )
-        resp = await client.generate_content(
-            prompt=prompt_text,
+        resp = await client.chat.completions.create(
             model=model,
-            extended_thinking=extended_thinking,
+            messages=[{"role": "user", "content": prompt_text}],
         )
-        return resp.text
+        content = resp.choices[0].message.content
+        if content:
+            logging.info("Successfully received finance calendar summary (%d chars)", len(content))
+        else:
+            logging.warning("Received empty finance calendar summary from Gemini Web2API")
+        return content
     except Exception:
-        logging.exception("Error generating calendar content with Gemini")
+        logging.exception("Error generating calendar content with Gemini Web2API")
         return None
-    finally:
-        try:
-            await client.close()
-        except:
-            pass
 
 async def send_calendar_to_channel(channel: discord.abc.Messageable, summary: str):
     """处理并发送内容到指定频道"""
