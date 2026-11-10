@@ -20,7 +20,6 @@ services:
       - ADMIN_USERNAME=${AISTUDIO_ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${AISTUDIO_ADMIN_PASSWORD}
       - PROXY_API_KEY=${AISTUDIO_PROXY_API_KEY}
-      - TEMPORARY_CHAT=${TEMPORARY_CHAT:-true}
     volumes:
       - aistudio-data:/data
 
