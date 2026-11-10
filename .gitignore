@@ -16,3 +16,8 @@ ENV/
 config.yaml
 gemini_cookies
 gemini_data/
+
+# Environment variables
+.env
+!.env.example
+scratch/
