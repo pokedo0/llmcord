@@ -165,8 +165,8 @@ async def run_tests():
         if os.path.exists(tmp_file):
             os.remove(tmp_file)
 
-    # 测试 6: 校验默认缺省 base_url 为 2048 以及 YouTube 默认开启解析机制
-    print("\n[Test 6] 校验缺省 base_url 与 YouTube auto_watch_all 机制...")
+    # 测试 6: 校验默认缺省 base_url 为 2048 以及 YouTube 频道监听过滤机制 (默认 false)
+    print("\n[Test 6] 校验缺省 base_url 与 YouTube 频道监听机制 (默认不监听未配置频道)...")
     os.environ.pop("GEMINI_BASE_URL", None)
     os.environ.pop("GEMINI_API_KEY", None)
     default_client, default_base = get_gemini_client({})
@@ -199,18 +199,28 @@ async def run_tests():
 
     os.environ["GEMINI_BASE_URL"] = test_base_url
     os.environ["GEMINI_API_KEY"] = MOCK_API_KEY
-    dummy_msg = DummyMsg()
-    test_cfg = {"youtube_summary": {"enabled": True, "auto_watch_all": True, "watch_channels": []}}
-    await maybe_handle_youtube_summary(dummy_msg, test_cfg, is_good_user=True, is_good_channel=True, is_dm=False)
-    assert len(dummy_msg.replies) > 0, "Default auto_watch_all 未能自动处理 YouTube 链接"
-    print(f"[PASS]: YouTube 默认解析机制 (auto_watch_all=True) 自动触发成功 (收到 {len(dummy_msg.replies)} 条回复)")
+    
+    # 6.1 未加入 watch_channels: 默认跳过
+    dummy_msg_unwatched = DummyMsg()
+    test_cfg_unwatched = {"youtube_summary": {"enabled": True, "watch_channels": []}}
+    await maybe_handle_youtube_summary(dummy_msg_unwatched, test_cfg_unwatched, is_good_user=True, is_good_channel=True, is_dm=False)
+    assert len(dummy_msg_unwatched.replies) == 0, "未加入 watch_channels 的频道不应自动处理 YouTube 链接"
+    print("[PASS]: 未监听频道默认跳过处理验证成功")
+
+    # 6.2 加入 watch_channels: 正常触发总结
+    dummy_msg_watched = DummyMsg()
+    test_cfg_watched = {"youtube_summary": {"enabled": True, "watch_channels": [dummy_msg_watched.channel.id]}}
+    await maybe_handle_youtube_summary(dummy_msg_watched, test_cfg_watched, is_good_user=True, is_good_channel=True, is_dm=False)
+    assert len(dummy_msg_watched.replies) > 0, "已加入 watch_channels 的频道未能正确处理 YouTube 链接"
+    print(f"[PASS]: 已监听频道自动触发成功 (收到 {len(dummy_msg_watched.replies)} 条回复)")
+
     os.environ.pop("GEMINI_BASE_URL", None)
     os.environ.pop("GEMINI_API_KEY", None)
 
     # 4. 关闭 Mock 服务
     server.shutdown()
     print("\n" + "=" * 60)
-    print("[SUCCESS] 全部集成测试通过！AIStudio2API 适配与默认 YouTube 解析均正常！")
+    print("[SUCCESS] 全部集成测试通过！AIStudio2API 适配与频道监听过滤均正常！")
     print("=" * 60)
 
 if __name__ == "__main__":

@@ -388,18 +388,11 @@ async def maybe_handle_youtube_summary(
     youtube_config = config.get("youtube_summary", {})
 
     watch_channels = set(youtube_config.get("watch_channels", []) or [])
-    auto_watch_all = bool(youtube_config.get("auto_watch_all", True))
     if new_msg.channel.id in watch_channels and new_msg.channel.id not in youtube_watch_channels:
         youtube_watch_channels[new_msg.channel.id] = None
         logging.info("Auto-enabled YouTube summaries for channel %s from config.watch_channels", new_msg.channel.id)
 
-    # 判定当前频道是否开启自动总结:
-    # 1. 若配置了显式 watch_channels 列表，则仅在列表内的频道生效（且未被 /ytwatch 临时禁用）
-    # 2. 若 watch_channels 为空，默认开启所有常规频道 (auto_watch_all=True)，除非被 /ytwatch 显式禁用 (False)
-    if watch_channels:
-        is_watching = (new_msg.channel.id in youtube_watch_channels) and (youtube_watch_channels.get(new_msg.channel.id) is not False)
-    else:
-        is_watching = auto_watch_all and (youtube_watch_channels.get(new_msg.channel.id) is not False)
+    is_watching = (new_msg.channel.id in youtube_watch_channels) and (youtube_watch_channels.get(new_msg.channel.id) is not False)
 
     if (
         not youtube_config.get("enabled", True)
@@ -409,13 +402,12 @@ async def maybe_handle_youtube_summary(
         or not is_watching
     ):
         logging.debug(
-            "YouTube summary skipped (enabled=%s, is_dm=%s, good_user=%s, good_channel=%s, is_watching=%s, auto_watch_all=%s)",
+            "YouTube summary skipped (enabled=%s, is_dm=%s, good_user=%s, good_channel=%s, watching=%s)",
             youtube_config.get("enabled", True),
             is_dm,
             is_good_user,
             is_good_channel,
             is_watching,
-            auto_watch_all,
         )
         return
 

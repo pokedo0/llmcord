@@ -95,11 +95,10 @@ gemini:
 
 youtube_summary:
   enabled: true
-  auto_watch_all: true # 默认对所有允许的频道开启 YouTube 自动解析总结，无需手动 /ytwatch
   prompt_file: config/youtube-summary-prompt.txt
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
   post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
-  watch_channels: [] # Optional: 若填写则仅监听指定频道 ID (为空且 auto_watch_all=true 时监听全部常规频道)
+  watch_channels: [] # Optional: pre-enable specific channel IDs to survive restarts
 
 research_report:
   enabled: true

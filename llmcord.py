@@ -157,7 +157,7 @@ async def ytwatch_command(
     channel_id = channel.id
 
     if not enabled:
-        youtube_watch_channels[channel_id] = False
+        youtube_watch_channels.pop(channel_id, None)
         await asyncio.to_thread(persist_watch_channel, channel_id, False)
         await interaction.response.send_message("Stopped summarizing YouTube links in this channel.", ephemeral=True)
         return
