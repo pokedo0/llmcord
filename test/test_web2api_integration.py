@@ -15,7 +15,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from youtube_summary import get_gemini_client, summarize_youtube_video, read_config
+from youtube_summary import get_gemini_client, summarize_youtube_video, read_config, maybe_handle_youtube_summary, youtube_watch_channels
 from finance_calendar import generate_calendar_summary
 from research_report import _summarize_with_gemini
 
@@ -165,10 +165,52 @@ async def run_tests():
         if os.path.exists(tmp_file):
             os.remove(tmp_file)
 
+    # 测试 6: 校验默认缺省 base_url 为 2048 以及 YouTube 默认开启解析机制
+    print("\n[Test 6] 校验缺省 base_url 与 YouTube auto_watch_all 机制...")
+    os.environ.pop("GEMINI_BASE_URL", None)
+    os.environ.pop("GEMINI_API_KEY", None)
+    default_client, default_base = get_gemini_client({})
+    assert default_base == "http://127.0.0.1:2048/v1", f"缺省 base_url 应为 http://127.0.0.1:2048/v1，实际为 {default_base}"
+    print(f"[PASS]: 缺省 base_url 正确回退到: {default_base}")
+
+    class DummyChannel:
+        id = 998877
+        name = "test-channel"
+        def typing(self):
+            class DummyTyping:
+                async def __aenter__(self): pass
+                async def __aexit__(self, exc_type, exc, tb): pass
+            return DummyTyping()
+
+    class DummyAuthor:
+        id = 112233
+        name = "testuser"
+        def __str__(self): return "testuser#0001"
+
+    class DummyMsg:
+        channel = DummyChannel()
+        author = DummyAuthor()
+        content = "check this out https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        embeds = []
+        def __init__(self):
+            self.replies = []
+        async def reply(self, *args, **kwargs):
+            self.replies.append((args, kwargs))
+
+    os.environ["GEMINI_BASE_URL"] = test_base_url
+    os.environ["GEMINI_API_KEY"] = MOCK_API_KEY
+    dummy_msg = DummyMsg()
+    test_cfg = {"youtube_summary": {"enabled": True, "auto_watch_all": True, "watch_channels": []}}
+    await maybe_handle_youtube_summary(dummy_msg, test_cfg, is_good_user=True, is_good_channel=True, is_dm=False)
+    assert len(dummy_msg.replies) > 0, "Default auto_watch_all 未能自动处理 YouTube 链接"
+    print(f"[PASS]: YouTube 默认解析机制 (auto_watch_all=True) 自动触发成功 (收到 {len(dummy_msg.replies)} 条回复)")
+    os.environ.pop("GEMINI_BASE_URL", None)
+    os.environ.pop("GEMINI_API_KEY", None)
+
     # 4. 关闭 Mock 服务
     server.shutdown()
     print("\n" + "=" * 60)
-    print("[SUCCESS] 方案二全部测试通过！代码完全支持环境变量远程直连！")
+    print("[SUCCESS] 全部集成测试通过！AIStudio2API 适配与默认 YouTube 解析均正常！")
     print("=" * 60)
 
 if __name__ == "__main__":

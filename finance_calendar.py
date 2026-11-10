@@ -17,6 +17,7 @@ from youtube_summary import (
     split_text_for_embeds,
     _split_summary_and_table,
     resolve_gemini_model,
+    resolve_gemini_reasoning_effort,
     resolve_gemini_extended_thinking,
     get_gemini_client,
 )
@@ -93,29 +94,26 @@ async def generate_calendar_summary() -> Optional[str]:
     cfg = read_config()
     cal_cfg = get_calendar_config()
     raw_model = resolve_gemini_model(cfg, cal_cfg)
-    extended_thinking = resolve_gemini_extended_thinking(cfg, cal_cfg)
-    if raw_model:
-        if extended_thinking and not raw_model.endswith("-thinking"):
-            model = f"{raw_model}-thinking"
-        else:
-            model = raw_model
-    else:
-        # 当配置中 model 为空/未指定时，传 "" 交由 Web2API 管理后台「默认模型」接管
-        model = ""
+    model = raw_model or "gemini-3.8-flash"
+    reasoning_effort = resolve_gemini_reasoning_effort(cfg, cal_cfg)
 
     client, base_url = get_gemini_client(cfg, cal_cfg)
     logging.info(
-        "Sending calendar prompt to Gemini Web2API (model=%s, extended_thinking=%s, base_url=%s)",
-        model or "Web2API-Default",
-        extended_thinking,
+        "Sending calendar prompt to AIStudio2API (model=%s, reasoning_effort=%s, base_url=%s)",
+        model,
+        reasoning_effort,
         base_url,
     )
 
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt_text}],
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt_text}],
+        }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
+        resp = await client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
         if content:
             logging.info("Successfully received finance calendar summary (%d chars)", len(content))

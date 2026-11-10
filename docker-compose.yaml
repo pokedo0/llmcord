@@ -17,19 +17,18 @@ services:
     volumes:
       - ./config:/app/config
 
-  gemini-web2api:
-    image: ghcr.io/zexadev/gemini-web2api-go:latest
+  aistudio2api:
+    image: ghcr.io/mag1cfall/aistudio2api:latest
     pull_policy: always
+    restart: unless-stopped
+    init: true
     ports:
-      - "8083:8083"
+      - "2048:2048"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    restart: unless-stopped
     volumes:
-      - gemini-data:/data
+      - aistudio-data:/data
     environment:
-      - PORT=8083
-      - ADMIN_TOKEN=admin123
       - HTTP_PROXY=http://host.docker.internal:7897
       - HTTPS_PROXY=http://host.docker.internal:7897
       - http_proxy=http://host.docker.internal:7897
@@ -44,7 +43,6 @@ services:
     command: --interval 86400 --cleanup
 
 volumes:
-  gemini-data:
-    name: llmcord_gemini-data
-    external: true
+  aistudio-data:
+    name: llmcord_aistudio-data
 

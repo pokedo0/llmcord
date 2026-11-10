@@ -24,10 +24,10 @@ if exist "venv\Scripts\activate.bat" (
 REM -- 2. 设置环境变量 --
 set LOGLEVEL=INFO
 
-REM -- Gemini Web2API VPS 远程直连地址 (若设置则优先覆盖 config.yaml) --
-REM 如需本地直连 VPS 8083 端口，取消下一行的 rem 并填入 VPS 公网 IP 或域名:
-rem set GEMINI_BASE_URL=http://<VPS_IP>:8083/v1
-rem set GEMINI_API_KEY=admin123
+REM -- Gemini AIStudio2API VPS 远程直连地址 (若设置则优先覆盖 config.yaml) --
+REM 如需本地直连 VPS 2048 端口，取消下一行的 rem 并填入 VPS 公网 IP 或域名与本地 API 密钥:
+rem set GEMINI_BASE_URL=http://<VPS_IP>:2048/v1
+rem set GEMINI_API_KEY=sk-aistudio-123456
 
 REM -- 3. 确认依赖已安装 --
 echo.

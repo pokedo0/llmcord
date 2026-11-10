@@ -19,6 +19,7 @@ from youtube_summary import (
     load_prompt_file,
     get_gemini_cookies,
     resolve_gemini_model,
+    resolve_gemini_reasoning_effort,
     resolve_gemini_extended_thinking,
     get_gemini_client,
 )
@@ -157,31 +158,28 @@ async def _summarize_with_gemini(
     attachment_paths: list[str],
     config: dict[str, Any],
 ) -> Optional[str]:
-    """Send files + prompt to Gemini Web2API and return the response text."""
+    """Send files + prompt to AIStudio2API and return the response text."""
     research_config = config.get("research_report", {})
     raw_model = resolve_gemini_model(config, research_config)
-    extended_thinking = resolve_gemini_extended_thinking(config, research_config)
-    if raw_model:
-        if extended_thinking and not raw_model.endswith("-thinking"):
-            model = f"{raw_model}-thinking"
-        else:
-            model = raw_model
-    else:
-        # 当配置中 model 为空/未指定时，传 "" 交由 Web2API 管理后台「默认模型」接管
-        model = ""
+    model = raw_model or "gemini-3.8-flash"
+    reasoning_effort = resolve_gemini_reasoning_effort(config, research_config)
 
     client, base_url = get_gemini_client(config, research_config)
     logging.info(
-        "Sending research prompt to Gemini Web2API (model=%s, extended_thinking=%s, base_url=%s) with %d file(s): %s",
-        model or "Web2API-Default", extended_thinking, base_url, len(attachment_paths), attachment_paths,
+        "Sending research prompt to AIStudio2API (model=%s, reasoning_effort=%s, base_url=%s) with %d file(s): %s",
+        model, reasoning_effort, base_url, len(attachment_paths), attachment_paths,
     )
 
     try:
         content_parts = _build_content_parts(prompt_text, attachment_paths)
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": content_parts}],
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": content_parts}],
+        }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
+        resp = await client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
         if content:
             logging.info("Successfully generated research report summary (%d chars)", len(content))

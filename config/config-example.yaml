@@ -87,18 +87,19 @@ system_prompt: |
 
 # Gemini settings (Unified model & thinking for youtube_summary, research_report, finance_calendar):
 gemini:
-  base_url: http://127.0.0.1:8083/v1 # Web2API endpoint (OpenAI-compatible)
-  api_key: "" # Optional API key configured in Web2API
+  base_url: http://127.0.0.1:2048/v1 # AIStudio2API endpoint (OpenAI-compatible)
+  api_key: "" # AIStudio2API 面板中的「本地 API 密钥」(PROXY_API_KEY)
   timeout: 120 # Request timeout in seconds
-  model: "" # 留空时由 Web 后台「默认模型」接管
-  extended_thinking: false # 思考模式由 Web 后台所选模型本身决定
+  model: "gemini-3.8-flash" # 指定模型 (如 gemini-3.8-flash 或 gemini-2.5-flash)
+  reasoning_effort: "low" # 思考程度: low (快速/无长思考), medium (平衡), high (深度思考)
 
 youtube_summary:
   enabled: true
+  auto_watch_all: true # 默认对所有允许的频道开启 YouTube 自动解析总结，无需手动 /ytwatch
   prompt_file: config/youtube-summary-prompt.txt
   retry_delay_seconds: 600 # Delay (in seconds) before retrying a summary if the video was too new
   post_delay_seconds: 30 # Initial delay (in seconds) before summarizing, to allow YouTube to process subtitles
-  watch_channels: [] # Optional: pre-enable specific channel IDs to survive restarts
+  watch_channels: [] # Optional: 若填写则仅监听指定频道 ID (为空且 auto_watch_all=true 时监听全部常规频道)
 
 research_report:
   enabled: true

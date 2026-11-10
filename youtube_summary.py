@@ -102,21 +102,37 @@ def resolve_gemini_model(config: dict[str, Any], module_config: Optional[dict[st
     return name
 
 
-def resolve_gemini_extended_thinking(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> bool:
-    """Resolve unified extended thinking mode from gemini.extended_thinking (or module fallback)."""
+def resolve_gemini_reasoning_effort(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> Optional[str]:
+    """Resolve unified reasoning_effort ('low', 'medium', 'high') from gemini or module config."""
     gemini_cfg = config.get("gemini", {})
+    module_cfg = module_config or {}
+
+    effort = gemini_cfg.get("reasoning_effort") or module_cfg.get("reasoning_effort")
+    if effort:
+        effort_str = str(effort).strip().lower()
+        if effort_str in ("low", "medium", "high"):
+            return effort_str
+
+    # Backward compatibility: extended_thinking: bool
     if "extended_thinking" in gemini_cfg:
-        return bool(gemini_cfg["extended_thinking"])
-    if module_config and "extended_thinking" in module_config:
-        return bool(module_config["extended_thinking"])
-    return False
+        return "high" if bool(gemini_cfg["extended_thinking"]) else "low"
+    if "extended_thinking" in module_cfg:
+        return "high" if bool(module_cfg["extended_thinking"]) else "low"
+
+    return None
+
+
+def resolve_gemini_extended_thinking(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> bool:
+    """Legacy helper for backward compatibility: returns True if reasoning_effort is high."""
+    effort = resolve_gemini_reasoning_effort(config, module_config)
+    return effort == "high"
 
 
 def get_gemini_client(config: dict[str, Any], module_config: Optional[dict[str, Any]] = None) -> tuple[AsyncOpenAI, str]:
-    """Return an AsyncOpenAI client configured for Gemini Web2API and the base_url."""
+    """Return an AsyncOpenAI client configured for AIStudio2API / Gemini Gateway and the base_url."""
     gemini_cfg = config.get("gemini", {})
     module_cfg = module_config or {}
-    base_url = os.getenv("GEMINI_BASE_URL") or gemini_cfg.get("base_url") or module_cfg.get("base_url") or "http://127.0.0.1:8083/v1"
+    base_url = os.getenv("GEMINI_BASE_URL") or gemini_cfg.get("base_url") or module_cfg.get("base_url") or "http://127.0.0.1:2048/v1"
     api_key = os.getenv("GEMINI_API_KEY") or gemini_cfg.get("api_key") or module_cfg.get("api_key") or "none"
     timeout = float(gemini_cfg.get("timeout") or module_cfg.get("timeout") or 120.0)
     client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
@@ -127,7 +143,7 @@ def get_gemini_cookies(config: dict[str, Any], youtube_config: Optional[dict[str
     """Legacy helper for backward compatibility: returns (base_url, api_key)."""
     gemini_cfg = config.get("gemini", {})
     module_cfg = youtube_config or {}
-    base_url = os.getenv("GEMINI_BASE_URL") or gemini_cfg.get("base_url") or module_cfg.get("base_url") or "http://127.0.0.1:8083/v1"
+    base_url = os.getenv("GEMINI_BASE_URL") or gemini_cfg.get("base_url") or module_cfg.get("base_url") or "http://127.0.0.1:2048/v1"
     api_key = os.getenv("GEMINI_API_KEY") or gemini_cfg.get("api_key") or module_cfg.get("api_key") or ""
     return base_url, api_key
 
@@ -171,16 +187,21 @@ def persist_youtube_cookies(
 def persist_gemini_model(
     model_name: Optional[str] = None,
     extended_thinking: Optional[bool] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> bool:
-    """Persist unified model and/or extended_thinking under gemini section in config.yaml."""
+    """Persist unified model and/or reasoning_effort under gemini section in config.yaml."""
     try:
         cfg = read_config()
         gemini_cfg = cfg.setdefault("gemini", {}) or {}
 
         if model_name is not None:
             gemini_cfg["model"] = model_name.strip()
-        if extended_thinking is not None:
-            gemini_cfg["extended_thinking"] = extended_thinking
+        if reasoning_effort is not None:
+            gemini_cfg["reasoning_effort"] = reasoning_effort.strip().lower()
+            gemini_cfg.pop("extended_thinking", None)
+        elif extended_thinking is not None:
+            gemini_cfg["reasoning_effort"] = "high" if extended_thinking else "low"
+            gemini_cfg.pop("extended_thinking", None)
 
         cfg["gemini"] = gemini_cfg
 
@@ -188,9 +209,9 @@ def persist_gemini_model(
             yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
 
         logging.info(
-            "Updated unified gemini settings in config.yaml: model=%s, extended_thinking=%s",
+            "Updated unified gemini settings in config.yaml: model=%s, reasoning_effort=%s",
             model_name,
-            extended_thinking,
+            gemini_cfg.get("reasoning_effort"),
         )
         return True
     except Exception:
@@ -302,38 +323,35 @@ async def summarize_youtube_video(
 ) -> Optional[str]:
     cfg = config or read_config()
     raw_model = resolve_gemini_model(cfg, youtube_config)
-    extended_thinking = resolve_gemini_extended_thinking(cfg, youtube_config)
-    if raw_model:
-        if extended_thinking and not raw_model.endswith("-thinking"):
-            model = f"{raw_model}-thinking"
-        else:
-            model = raw_model
-    else:
-        # 当配置中 model 为空/未指定时，传 "" 交由 Web2API 管理后台「默认模型」接管
-        model = ""
+    model = raw_model or "gemini-3.8-flash"
+    reasoning_effort = resolve_gemini_reasoning_effort(cfg, youtube_config)
 
     client, base_url = get_gemini_client(cfg, youtube_config)
     logging.info(
-        "Sending YouTube summary request to Gemini Web2API (model=%s, extended_thinking=%s, base_url=%s, url=%s)",
-        model or "Web2API-Default",
-        extended_thinking,
+        "Sending YouTube summary request to AIStudio2API (model=%s, reasoning_effort=%s, base_url=%s, url=%s)",
+        model,
+        reasoning_effort,
         base_url,
         url,
     )
 
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt_text}],
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt_text}],
+        }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
+        resp = await client.chat.completions.create(**kwargs)
         summary = _extract_summary(resp)
         if summary:
             logging.info("Successfully received YouTube summary (%d chars) for %s", len(summary), url)
         else:
-            logging.warning("Received empty YouTube summary from Gemini Web2API for %s", url)
+            logging.warning("Received empty YouTube summary from AIStudio2API for %s", url)
         return summary
     except Exception:
-        logging.exception("Error calling Gemini Web2API for YouTube summary: %s", url)
+        logging.exception("Error calling AIStudio2API for YouTube summary: %s", url)
         return None
 
 
@@ -370,24 +388,34 @@ async def maybe_handle_youtube_summary(
     youtube_config = config.get("youtube_summary", {})
 
     watch_channels = set(youtube_config.get("watch_channels", []) or [])
+    auto_watch_all = bool(youtube_config.get("auto_watch_all", True))
     if new_msg.channel.id in watch_channels and new_msg.channel.id not in youtube_watch_channels:
         youtube_watch_channels[new_msg.channel.id] = None
-        logging.info("Auto-enabled YouTube summaries for channel %s from config", new_msg.channel.id)
+        logging.info("Auto-enabled YouTube summaries for channel %s from config.watch_channels", new_msg.channel.id)
+
+    # 判定当前频道是否开启自动总结:
+    # 1. 若配置了显式 watch_channels 列表，则仅在列表内的频道生效（且未被 /ytwatch 临时禁用）
+    # 2. 若 watch_channels 为空，默认开启所有常规频道 (auto_watch_all=True)，除非被 /ytwatch 显式禁用 (False)
+    if watch_channels:
+        is_watching = (new_msg.channel.id in youtube_watch_channels) and (youtube_watch_channels.get(new_msg.channel.id) is not False)
+    else:
+        is_watching = auto_watch_all and (youtube_watch_channels.get(new_msg.channel.id) is not False)
 
     if (
         not youtube_config.get("enabled", True)
         or is_dm
         or not is_good_user
         or not is_good_channel
-        or new_msg.channel.id not in youtube_watch_channels
+        or not is_watching
     ):
         logging.debug(
-            "YouTube summary skipped (enabled=%s, is_dm=%s, good_user=%s, good_channel=%s, watching=%s)",
+            "YouTube summary skipped (enabled=%s, is_dm=%s, good_user=%s, good_channel=%s, is_watching=%s, auto_watch_all=%s)",
             youtube_config.get("enabled", True),
             is_dm,
             is_good_user,
             is_good_channel,
-            new_msg.channel.id in youtube_watch_channels,
+            is_watching,
+            auto_watch_all,
         )
         return
 
@@ -397,10 +425,11 @@ async def maybe_handle_youtube_summary(
 
     cookies = get_gemini_cookies(config, youtube_config)
     if not cookies[0]:
-        await new_msg.reply("Gemini Web2API base_url is missing for YouTube summaries.", mention_author=False)
+        await new_msg.reply("AIStudio2API base_url is missing for YouTube summaries.", mention_author=False)
         return
 
-    prompt_template = youtube_watch_channels.get(new_msg.channel.id) or load_youtube_prompt(youtube_config)
+    channel_prompt = youtube_watch_channels.get(new_msg.channel.id)
+    prompt_template = channel_prompt if isinstance(channel_prompt, str) and channel_prompt else load_youtube_prompt(youtube_config)
     prompt_text = format_youtube_prompt(
         prompt_template, url, author_name=str(new_msg.author), channel_name=getattr(new_msg.channel, "name", "this channel")
     )

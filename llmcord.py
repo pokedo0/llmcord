@@ -25,6 +25,7 @@ from youtube_summary import (
     persist_gemini_model,
     get_gemini_client,
     resolve_gemini_model,
+    resolve_gemini_reasoning_effort,
     resolve_gemini_extended_thinking,
 )
 # gemini_webapi replaced with Web2API
@@ -156,7 +157,7 @@ async def ytwatch_command(
     channel_id = channel.id
 
     if not enabled:
-        youtube_watch_channels.pop(channel_id, None)
+        youtube_watch_channels[channel_id] = False
         await asyncio.to_thread(persist_watch_channel, channel_id, False)
         await interaction.response.send_message("Stopped summarizing YouTube links in this channel.", ephemeral=True)
         return
@@ -211,15 +212,16 @@ async def ysession_command(
         return
 
     await interaction.response.send_message(
-        "ℹ️ **已迁移至 Web2API 架构**\nCookie 由 VPS 服务端 (`gemini-web2api`) 自动保活管理，无需手动更新。\n如需调整服务地址，请在 `config/config.yaml` 的 `gemini.base_url` 中配置。",
+        "ℹ️ **已迁移至 AIStudio2API / Web2API 网关架构**\nGoogle 账号与凭据由网关后台服务端统一保活管理，无需在此手动更新 Cookie。\n如需调整服务地址或 API 密钥，请在 `config/config.yaml` 的 `gemini.base_url` 与 `gemini.api_key` 中配置。",
         ephemeral=True
     )
 
 
-@discord_bot.tree.command(name="geminimodels", description="List or set unified Gemini model & extended thinking mode")
+@discord_bot.tree.command(name="geminimodels", description="List or set unified Gemini model & reasoning effort (low/medium/high)")
 async def geminimodels_command(
     interaction: discord.Interaction,
     set_model: Optional[str] = None,
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
     extended_thinking: Optional[bool] = None,
 ) -> None:
     global config
@@ -230,83 +232,86 @@ async def geminimodels_command(
 
     await interaction.response.defer(ephemeral=True)
     logging.info(
-        "User %s requested /geminimodels (set_model=%s, extended_thinking=%s)",
+        "User %s requested /geminimodels (set_model=%s, reasoning_effort=%s, extended_thinking=%s)",
         interaction.user.id,
         set_model,
+        reasoning_effort,
         extended_thinking,
     )
 
     client, base_url = get_gemini_client(cfg)
     try:
-        logging.info("Querying Gemini Web2API (%s/models) for available models...", base_url)
+        logging.info("Querying Gemini AIStudio2API (%s/models) for available models...", base_url)
         models_data = await client.models.list()
         models = [m.id for m in models_data.data]
         logging.info(
-            "Gemini Web2API connected successfully. Discovered %d models: %s",
+            "Gemini AIStudio2API connected successfully. Discovered %d models: %s",
             len(models),
             models,
         )
     except Exception as err:
-        logging.exception("Failed to connect to Gemini Web2API for /geminimodels: %s", err)
+        logging.exception("Failed to connect to Gemini AIStudio2API for /geminimodels: %s", err)
         await interaction.followup.send(
-            f"❌ **连接 Gemini Web2API 失败**：`{err}`\n请检查 VPS 服务 `gemini-web2api` 是否正常运行，以及 `config/config.yaml` 中的 `gemini.base_url` 是否正确。",
+            f"❌ **连接 Gemini AIStudio2API 失败**：`{err}`\n请检查服务 `aistudio2api` 是否正常运行，以及 `config/config.yaml` 中的 `gemini.base_url` 与 `gemini.api_key` 是否正确。",
             ephemeral=True,
         )
         return
 
-    cur_model = cfg.get("gemini", {}).get("model", "unspecified")
-    cur_think = bool(cfg.get("gemini", {}).get("extended_thinking", False))
+    cur_model = cfg.get("gemini", {}).get("model", "gemini-3.8-flash")
+    cur_effort = resolve_gemini_reasoning_effort(cfg) or "low"
+
+    target_effort = reasoning_effort
+    if target_effort is None and extended_thinking is not None:
+        target_effort = "high" if extended_thinking else "low"
 
     update_msg = ""
-    if set_model is not None or extended_thinking is not None:
+    if set_model is not None or target_effort is not None:
         target_model = set_model.strip() if set_model is not None else None
-        success = await asyncio.to_thread(persist_gemini_model, target_model, extended_thinking)
+        success = await asyncio.to_thread(persist_gemini_model, target_model, None, target_effort)
         if success:
             config = await asyncio.to_thread(get_config)
             logging.info(
-                "Successfully updated config.yaml gemini settings: model=%s, extended_thinking=%s",
+                "Successfully updated config.yaml gemini settings: model=%s, reasoning_effort=%s",
                 target_model,
-                extended_thinking,
+                target_effort,
             )
             changes = []
             if target_model is not None:
                 cur_model = target_model
                 changes.append(f"模型设置为 `{target_model}`")
-            if extended_thinking is not None:
-                cur_think = extended_thinking
-                changes.append(f"扩展思考设置为 `{extended_thinking}`")
+            if target_effort is not None:
+                cur_effort = target_effort
+                changes.append(f"思考程度设置为 `{target_effort}`")
             update_msg = f"✅ **统一配置已更新**：{'，'.join(changes)}\n*(将统一应用于 YouTube 视频总结、研报分析、财经日历)*\n\n"
         else:
             logging.error("Failed to persist unified gemini settings")
             update_msg = "⚠️ **写入配置失败**：未能更新 `config.yaml`，请检查服务器日志。\n\n"
 
-    status_desc = "ONLINE (已连接 Web2API 网关)"
+    status_desc = "ONLINE (已连接 AIStudio2API 网关)"
     models_text = []
-    default_name = models[0] if models else "unspecified"
-    models_text.append(f"• `unspecified` 或 `default` ── **[推荐/默认]** 随 Google 自动分配 (当前映射: `{default_name}`)")
+    models_text.append("• `gemini-3.8-flash` ── **[推荐/默认]** 高性能低延迟")
 
-    for idx, m_id in enumerate(models):
-        is_def = " ★ [默认]" if idx == 0 else ""
-        models_text.append(f"• `{m_id}`{is_def}")
-
-    sample_models = ", ".join(models[:3]) if models else "gemini-2.5-flash"
+    for m_id in models:
+        if m_id == "gemini-3.8-flash":
+            continue
+        models_text.append(f"• `{m_id}`")
 
     lines = [
         f"{update_msg}### 🤖 Gemini 统一模型与思考配置",
         f"**账号状态**：{status_desc}",
         f"**当前统一配置**：",
         f"• `model`: `{cur_model}`",
-        f"• `extended_thinking`: `{cur_think}`",
+        f"• `reasoning_effort`: `{cur_effort}` (可选: `low`, `medium`, `high`)",
         f"*(YouTube 总结、研报研读、财经日历均统一走此配置)*",
         "",
         "**可选模型名（可填写在配置中）**：",
-        *models_text,
+        *models_text[:20],
         "",
         "**配置示例 (`config/config.yaml`)**：",
         "```yaml",
         "gemini:",
-        f"  model: {cur_model}  # 可选: unspecified, {sample_models}",
-        f"  extended_thinking: {str(cur_think).lower()}  # 统一扩展思考 (true/false)",
+        f"  model: \"{cur_model}\"",
+        f"  reasoning_effort: \"{cur_effort}\"  # low (快速/无长思考), medium (平衡), high (深度思考)",
         "```",
     ]
 
@@ -321,34 +326,36 @@ async def ping_command(interaction: discord.Interaction, prompt: Optional[str] =
     cfg = await asyncio.to_thread(get_config)
     client, base_url = get_gemini_client(cfg)
     raw_model = resolve_gemini_model(cfg)
-    extended_thinking = resolve_gemini_extended_thinking(cfg)
-    if raw_model:
-        model = f"{raw_model}-thinking" if (extended_thinking and not raw_model.endswith("-thinking")) else raw_model
-    else:
-        model = ""
+    model = raw_model or "gemini-3.8-flash"
+    reasoning_effort = resolve_gemini_reasoning_effort(cfg)
 
     ws_latency = round(discord_bot.latency * 1000) if getattr(discord_bot, "latency", None) else None
     ws_str = f"{ws_latency}ms" if ws_latency is not None and ws_latency >= 0 else "N/A"
 
     logging.info(
-        "/ping invoked by %s (user_id=%s) in channel %s. Sending test prompt to Gemini Web2API (model=%s, base_url=%s, prompt=%r)",
+        "/ping invoked by %s (user_id=%s) in channel %s. Sending test prompt to Gemini AIStudio2API (model=%s, reasoning_effort=%s, base_url=%s, prompt=%r)",
         interaction.user,
         interaction.user.id,
         getattr(interaction.channel, "id", None),
-        model or "Web2API-Default",
+        model,
+        reasoning_effort,
         base_url,
         test_prompt,
     )
 
     t0 = time.time()
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": test_prompt}],
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": test_prompt}],
+        }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
+        resp = await client.chat.completions.create(**kwargs)
         took_ms = round((time.time() - t0) * 1000)
         content = (resp.choices[0].message.content or "").strip()
-        actual_model = getattr(resp, "model", None) or model or "Web2API-Default"
+        actual_model = getattr(resp, "model", None) or model
 
         logging.info(
             "/ping succeeded in %dms (model=%s, resp_len=%d): %r",
@@ -359,7 +366,7 @@ async def ping_command(interaction: discord.Interaction, prompt: Optional[str] =
         )
 
         lines_out = [
-            f"**Pong!** 🏓 Gemini 响应正常（耗时: `{took_ms}ms` | Gateway: `{ws_str}` | 模型: `{actual_model}`）",
+            f"**Pong!** 🏓 Gemini (AIStudio2API) 响应正常（耗时: `{took_ms}ms` | Gateway: `{ws_str}` | 模型: `{actual_model}` | 思考: `{reasoning_effort or 'default'}`）",
             f"> **Prompt**: `{test_prompt}`",
             "",
             content,
@@ -371,7 +378,7 @@ async def ping_command(interaction: discord.Interaction, prompt: Optional[str] =
         err_msg = [
             f"❌ **Gemini Ping 失败**（耗时: `{took_ms}ms` | Gateway: `{ws_str}`）：",
             f"```{err}```",
-            "> 请检查 Gemini Web2API 是否正常运行、Cookie 是否有效。",
+            "> 请检查 AIStudio2API 是否正常运行、本地 API 密钥 (PROXY_API_KEY) 是否正确、Google 账号是否有效。",
         ]
         await interaction.followup.send("\n".join(err_msg), ephemeral=False)
 
